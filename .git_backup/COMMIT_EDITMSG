@@ -1,0 +1,7 @@
+Initial commit: Setup Mage AI project with Docker configuration
+
+- Add complete Mage AI project structure with default_repo
+- Configure Docker Compose with PostgreSQL on port 5433
+- Add comprehensive .gitignore for Python/Mage AI projects
+- Include example pipeline with Titanic dataset processing
+- Update README with project documentation and setup instructions

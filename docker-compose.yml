@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  mage:
+    image: mageai/mageai:latest
+    command: mage start default_repo
+    environment:
+      - USER_CODE_PATH=/home/src/default_repo
+      - PYTHONPATH=/home/src
+    ports:
+      - "6789:6789"
+    volumes:
+      - .:/home/src
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: mage
+      POSTGRES_USER: mage
+      POSTGRES_PASSWORD: mage
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
