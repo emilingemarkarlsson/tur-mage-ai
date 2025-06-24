@@ -11,6 +11,8 @@ services:
       - "6789:6789"
     volumes:
       - .:/home/src
+      - mage_data:/home/src/mage_data
+      - mage_logs:/home/src/.mage_data
     restart: unless-stopped
     stdin_open: true
     tty: true
@@ -29,3 +31,5 @@ services:
 
 volumes:
   postgres_data:
+  mage_data:
+  mage_logs:
