@@ -9,3 +9,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.log
+mage_data/
+mage_project/.ssh_tunnel/
+mage_project/metadata.yaml

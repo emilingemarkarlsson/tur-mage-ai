@@ -19,6 +19,7 @@ Detta repo är en "by the book"-setup för Mage OSS i Docker Compose med:
 3. Öppna Mage: `http://localhost:6789`
 
 Standard-inlogg (Mage OSS): `admin` / `admin`. Byt lösenord direkt efter första inloggningen.  
+Om du använder den här repots uppsatta default-owner, logga in med: `admin@example.com` / `admin`.  
 Källa: Mage Quickstart-dokumentationen.  
 
 ## Verifiera att projektet sparas lokalt
