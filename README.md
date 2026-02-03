@@ -21,6 +21,16 @@ Detta repo är en "by the book"-setup för Mage OSS i Docker Compose med:
 Standard-inlogg (Mage OSS): `admin` / `admin`. Byt lösenord direkt efter första inloggningen.  
 Källa: Mage Quickstart-dokumentationen.  
 
+## Verifiera att projektet sparas lokalt
+
+När du skapar pipelines/blocks i Mage skrivs de som filer i `mage_project/` lokalt.
+Ett snabbt sätt att verifiera:
+
+1. Skapa en ny pipeline i UI
+2. Kontrollera att en ny mapp/fil dyker upp under `mage_project/`
+
+Om du raderar containern men behåller mappen `mage_project/` så ligger allt kvar.
+
 ## MinIO (externt)
 
 Ange din externa MinIO‑endpoint i `.env` som `MINIO_ENDPOINT` och dina nycklar som `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
