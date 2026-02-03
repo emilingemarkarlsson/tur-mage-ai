@@ -1,0 +1,6 @@
+version: 0.1.1
+default:
+  AWS_ACCESS_KEY_ID: "{{ env_var('AWS_ACCESS_KEY_ID') }}"
+  AWS_SECRET_ACCESS_KEY: "{{ env_var('AWS_SECRET_ACCESS_KEY') }}"
+  AWS_REGION: "{{ env_var('AWS_REGION') }}"
+  AWS_ENDPOINT: "{{ env_var('MINIO_ENDPOINT') }}"
