@@ -1,1 +1,4 @@
-mage-ai[s3]
+mage-ai[s3,dbt]
+polars
+duckdb
+boto3
