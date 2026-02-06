@@ -102,6 +102,8 @@ Du kan välja källa med `S3_SOURCE`:
 
 Se `.env.example` för alla variabler.
 
+**Validera Silver och Gold:** Kör `python scripts/validate_silver_gold.py` (från projektroten eller i containern). Det visar vilka datamängder som har Parquet-filer och (om DuckDB finns lokalt) radantal per vy. Nya kolumner i Silver (t.ex. `conference_abbr`, `start_time_utc`, edge `category`/`value_*`) hamnar automatiskt i Gold-vyerna eftersom vyer bygger på `SELECT *` från Parquet.
+
 **Kontrollera att all data i Hetzner kommer med:** Kör `python scripts/list_s3_bucket.py` (i containern: `docker exec tur-mage-ai-mage-1 bash -c "cd /home/src && python scripts/list_s3_bucket.py"`) och jämför med [documentation/DATA_SOURCES_S3.md](documentation/DATA_SOURCES_S3.md) – där står vilka S3-mappar pipelinen läser och vilka som (ännu) inte laddas. **Bronze (~100 GB) vs Silver:** S3 innehåller samma matchfiler många gånger (by_date, by_team, by_player); pipelinen läser bara by_date och sparar utplockade fält i Parquet, så Silver blir mycket mindre i GB men med samma täckning. Kör `python scripts/compare_bronze_silver_volume.py` för att se antal matcher i S3 vs Silver och förklaring till storleken.
 
 **Analysera alla filer och strukturer (för att få ut all data till Silver/Gold):** Kör `python scripts/analyze_data_structure.py`. Det skapar `documentation/DATA_STRUCTURE_REPORT.md` och `.json` med S3-inventering, JSON-struktur per källtyp, Silver-schema och mapping. Använd rapporten för att uppdatera pipelinen. Flaggor: `--no-s3` (bara Silver), `--s3-quick` (snabb S3-scan, max 500 filer per mapp).
@@ -135,6 +137,20 @@ Källa: Mage S3-integrationsdokumentation (MinIO support).
    docker compose pull
    docker compose up -d --build
    ```
+
+## Dokumentation
+
+- **[KEY_EXTRACTION_ANALYSIS.md](documentation/KEY_EXTRACTION_ANALYSIS.md)** – vilka nycklar som finns i källorna vs vad pipelinen plockar ut, och åtgärder för att få med så mycket som möjligt.
+- **[TREND_ANALYSIS.md](documentation/TREND_ANALYSIS.md)** – vilken statistik som finns tillgänglig för trendanalyser (lag och spelare per match).
+- **[DATA_SOURCES_S3.md](documentation/DATA_SOURCES_S3.md)** – S3-mappar som pipelinen läser och vilka pipelines som använder dem.
+- **[JSON_KEY_INVENTORY.md](documentation/JSON_KEY_INVENTORY.md)** – genererad inventering av alla JSON-nyckelvägar per källtyp (från `scripts/inventory_json_keys_from_s3.py`).
+
+## Schemaläggning (cron / n8n)
+
+För **återkommande uppdateringar** kan du trigga Mage-pipelines externt:
+
+- **Cron:** Anropa Mage API (om du exponerar det) eller kör t.ex. `docker exec … mage run dimensions_pipeline` (beroende på hur Mage är konfigurerat). Kör först dimensions och seasonal_stats, sedan games (ev. med inkrementellt datum), slutligen refresh_duckdb_views.
+- **n8n (eller annan orchestrator):** Sätt upp flöde som kör pipelines i rätt ordning efter att ny data dykt upp i S3. Se [DATA_INGESTION_MAGE_DB.md](documentation/DATA_INGESTION_MAGE_DB.md) för strategier (full refresh vs upsert och hur man kan använda Mage som API).
 
 ## Git (valfritt men rekommenderat)
 
