@@ -1,0 +1,9 @@
+{
+  "generated_at": "2026-02-06T17:39:15.373525Z",
+  "s3_inventory": {
+    "_skipped": "run without --no-s3 to include S3"
+  },
+  "s3_sample_structures": {},
+  "silver_schema": {},
+  "mapping": []
+}

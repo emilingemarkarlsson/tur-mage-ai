@@ -1,0 +1,11 @@
+blocks:
+- all_upstream_blocks_executed: true
+  downstream_blocks: []
+  name: base load
+  status: updated
+  type: data_loader
+  upstream_blocks: []
+  uuid: base_load
+name: base pipeline
+type: python
+uuid: base_pipeline

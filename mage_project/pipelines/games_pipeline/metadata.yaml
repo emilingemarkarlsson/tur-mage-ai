@@ -1,0 +1,38 @@
+blocks:
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - transform_games
+  name: load games incremental
+  status: updated
+  type: data_loader
+  upstream_blocks: []
+  uuid: load_games_incremental
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - export_games_parquet
+  name: transform games
+  status: updated
+  type: transformer
+  upstream_blocks:
+  - load_games_incremental
+  uuid: transform_games
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - refresh_duckdb_views
+  name: export games parquet
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - transform_games
+  uuid: export_games_parquet
+- all_upstream_blocks_executed: true
+  downstream_blocks: []
+  name: refresh duckdb views
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - export_games_parquet
+  uuid: refresh_duckdb_views
+name: games pipeline
+type: python
+uuid: games_pipeline

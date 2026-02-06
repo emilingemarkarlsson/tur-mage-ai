@@ -13,8 +13,47 @@ services:
     environment:
       USER_CODE_PATH: /home/src/${PROJECT_NAME}
       ENV: ${ENV}
+      DATA_LAKE_PATH: ${DATA_LAKE_PATH}
+      GAMES_START_DATE: ${GAMES_START_DATE}
+      DATA_LAKE_SINK: ${DATA_LAKE_SINK}
+      S3_DATA_LAKE_PREFIX: ${S3_DATA_LAKE_PREFIX}
+      S3_DATA_LAKE_BUCKET: ${S3_DATA_LAKE_BUCKET}
+      S3_SOURCE: ${S3_SOURCE}
+      HETZNER_BUCKET: ${HETZNER_BUCKET}
+      HETZNER_ENDPOINT: ${HETZNER_ENDPOINT}
+      HETZNER_REGION: ${HETZNER_REGION}
+      HETZNER_ACCESS_KEY: ${HETZNER_ACCESS_KEY}
+      HETZNER_SECRET_KEY: ${HETZNER_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_REGION: ${MINIO_REGION}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
     ports:
       - "6789:6789"
+      - "8501:8501"
     volumes:
       - .:/home/src
+    depends_on:
+      - postgres
     restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

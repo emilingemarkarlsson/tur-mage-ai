@@ -1,0 +1,38 @@
+blocks:
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - transform_dimensions
+  name: load dimensions
+  status: updated
+  type: data_loader
+  upstream_blocks: []
+  uuid: load_dimensions
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - export_dimensions_parquet
+  name: transform dimensions
+  status: updated
+  type: transformer
+  upstream_blocks:
+  - load_dimensions
+  uuid: transform_dimensions
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - refresh_duckdb_views
+  name: export dimensions parquet
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - transform_dimensions
+  uuid: export_dimensions_parquet
+- all_upstream_blocks_executed: true
+  downstream_blocks: []
+  name: refresh duckdb views
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - export_dimensions_parquet
+  uuid: refresh_duckdb_views
+name: dimensions pipeline
+type: python
+uuid: dimensions_pipeline

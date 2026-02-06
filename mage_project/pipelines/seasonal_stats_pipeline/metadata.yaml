@@ -1,0 +1,38 @@
+blocks:
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - transform_seasonal_stats
+  name: load seasonal stats
+  status: updated
+  type: data_loader
+  upstream_blocks: []
+  uuid: load_seasonal_stats
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - export_seasonal_stats_parquet
+  name: transform seasonal stats
+  status: updated
+  type: transformer
+  upstream_blocks:
+  - load_seasonal_stats
+  uuid: transform_seasonal_stats
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - refresh_duckdb_views
+  name: export seasonal stats parquet
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - transform_seasonal_stats
+  uuid: export_seasonal_stats_parquet
+- all_upstream_blocks_executed: true
+  downstream_blocks: []
+  name: refresh duckdb views
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - export_seasonal_stats_parquet
+  uuid: refresh_duckdb_views
+name: seasonal stats pipeline
+type: python
+uuid: seasonal_stats_pipeline

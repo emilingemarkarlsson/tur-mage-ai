@@ -12,3 +12,5 @@ __pycache__/
 mage_data/
 mage_project/.ssh_tunnel/
 mage_project/metadata.yaml
+mage_project/data_lake/
+mage_project/state/

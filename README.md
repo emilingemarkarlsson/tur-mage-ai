@@ -32,6 +32,85 @@ Ett snabbt sätt att verifiera:
 
 Om du raderar containern men behåller mappen `mage_project/` så ligger allt kvar.
 
+## Data Lake (Parquet + DuckDB)
+
+Pipelines i repo:t skriver Parquet‑filer till `DATA_LAKE_PATH` (default `mage_project/data_lake`).
+DuckDB‑filen skapas lokalt i `mage_project/data_lake/gold/nhl.duckdb` under körning.
+När `DATA_LAKE_SINK=s3`: Parquet och `nhl.duckdb` laddas upp till S3 (t.ex. `nhl-analytics/silver/...` och `nhl-analytics/gold/nhl.duckdb`). **Den lokala DuckDB‑filen tas bort efter uppladdning** så att S3 är enda kopian och disken inte fylls. Streamlit‑viewern kan läsa direkt från S3 (read‑only) – kryssa i "Använd S3 (Hetzner) från .env" eller ange sökväg `s3://bucket/prefix/gold/nhl.duckdb`.
+
+## Full laddning i Mage (alla pipelines → Streamlit)
+
+För att köra **full laddning av all data** enligt planen och sedan använda Streamlit:
+
+### 1. Konfiguration
+
+- I `.env`: sätt `GAMES_START_DATE=2010-01-01` (eller tidigaste datum du har data för). För endast senaste säsong kan du använda t.ex. `2025-01-01`.
+- Sätt `DATA_LAKE_SINK=s3` och `S3_DATA_LAKE_BUCKET` / `S3_DATA_LAKE_PREFIX` om Silver ska skrivas till Hetzner.
+
+### 2. Rensa incremental state (vid full omkörning av games)
+
+Om du vill att **games_pipeline** ska läsa **alla** datum från källan (inte bara nya sedan förra körningen):
+
+```bash
+./scripts/reset_full_games_load.sh
+```
+
+Alternativt (om container heter annat):
+
+```bash
+docker exec -it tur-mage-ai-mage-1 rm -f /home/src/mage_project/state/last_games_date.txt
+```
+
+### 3. Starta Mage och kör pipelines i ordning
+
+1. `docker compose up -d`
+2. Öppna Mage: **http://localhost:6789**
+3. Kör i Mage UI (i denna ordning):
+   - **dimensions_pipeline** (teams, players, countries, roster, schedule, game_ids, glossary, draft)
+   - **seasonal_stats_pipeline**
+   - **games_pipeline** (kan ta lång tid vid full backfill – många JSON-filer från S3)
+   - **refresh_duckdb_views** (uppdaterar `gold/nhl.duckdb` från alla Silver-Parquet)
+
+Efter det ligger Silver i `mage_project/data_lake/silver/` (och i S3 om `DATA_LAKE_SINK=s3`) och Gold i `mage_project/data_lake/gold/nhl.duckdb`.
+
+### 4. Starta Streamlit och koppla till DuckDB
+
+Viewern kan antingen läsa en **lokal** DuckDB‑fil (t.ex. `mage_project/data_lake/gold/nhl.duckdb`) eller **direkt från S3** (ingen lokal kopia). När du kör med `DATA_LAKE_SINK=s3` finns databasen bara i S3 – använd då i viewern kryssrutan "Använd S3 (Hetzner) från .env" eller sökväg `s3://bucket/prefix/gold/nhl.duckdb`.
+
+**I containern (samma volym som Mage):**
+
+```bash
+docker exec -it tur-mage-ai-mage-1 streamlit run /home/src/streamlit_viewer.py --server.address 0.0.0.0 --server.port 8501
+```
+
+Öppna **http://localhost:8501**. Välj tabell/vy i sidofältet och bläddra i data.
+
+**Lokalt (om du har Python + duckdb + streamlit):**
+
+```bash
+cd /sökväg/till/tur-mage-ai
+streamlit run streamlit_viewer.py
+```
+
+Sökvägen till DuckDB i sidofältet ska vara `mage_project/data_lake/gold/nhl.duckdb` (relativt projektroten).
+
+## S3‑källa (Hetzner eller MinIO)
+
+Du kan välja källa med `S3_SOURCE`:
+- `S3_SOURCE=hetzner` använder `HETZNER_*`
+- `S3_SOURCE=minio` använder `MINIO_*`
+
+Se `.env.example` för alla variabler.
+
+**Kontrollera att all data i Hetzner kommer med:** Kör `python scripts/list_s3_bucket.py` (i containern: `docker exec tur-mage-ai-mage-1 bash -c "cd /home/src && python scripts/list_s3_bucket.py"`) och jämför med [documentation/DATA_SOURCES_S3.md](documentation/DATA_SOURCES_S3.md) – där står vilka S3-mappar pipelinen läser och vilka som (ännu) inte laddas. **Bronze (~100 GB) vs Silver:** S3 innehåller samma matchfiler många gånger (by_date, by_team, by_player); pipelinen läser bara by_date och sparar utplockade fält i Parquet, så Silver blir mycket mindre i GB men med samma täckning. Kör `python scripts/compare_bronze_silver_volume.py` för att se antal matcher i S3 vs Silver och förklaring till storleken.
+
+**Analysera alla filer och strukturer (för att få ut all data till Silver/Gold):** Kör `python scripts/analyze_data_structure.py`. Det skapar `documentation/DATA_STRUCTURE_REPORT.md` och `.json` med S3-inventering, JSON-struktur per källtyp, Silver-schema och mapping. Använd rapporten för att uppdatera pipelinen. Flaggor: `--no-s3` (bara Silver), `--s3-quick` (snabb S3-scan, max 500 filer per mapp).
+
+## Metadata‑DB (Postgres)
+
+Repo:t är konfigurerat att använda Postgres som metadata‑databas (stabilare än sqlite för dagliga körningar).
+Detta styrs via `MAGE_DATABASE_CONNECTION_URL` i `.env`.
+
 ## MinIO (externt)
 
 Ange din externa MinIO‑endpoint i `.env` som `MINIO_ENDPOINT` och dina nycklar som `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
