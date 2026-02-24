@@ -10,6 +10,13 @@ if repo_path not in sys.path:
 
 from utils.transform_utils import parse_date, parse_time_to_seconds, to_float, to_int
 
+
+def _goalie_gaa(goals_against: int | None, toi_seconds: int | float | None) -> float | None:
+    """GAA = goals against per 60 minutes. Return None if not computable."""
+    if goals_against is None or toi_seconds is None or toi_seconds <= 0:
+        return None
+    return round(to_float(goals_against * 3600 / toi_seconds), 4)
+
 if "transformer" not in globals():
     from mage_ai.data_preparation.decorators import transformer
 
@@ -49,6 +56,8 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
         home_score = home.get("score")
         away_score = away.get("score")
         season = boxscore.get("season")
+        home_team_id = to_int(home.get("id"))
+        away_team_id = to_int(away.get("id"))
     else:
         teams = (game_data.get("teams") or {})
         home = teams.get("home", {})
@@ -58,6 +67,8 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
         home_score = linescore.get("teams", {}).get("home", {}).get("goals")
         away_score = linescore.get("teams", {}).get("away", {}).get("goals")
         season = game_data.get("game", {}).get("season")
+        home_team_id = to_int(home.get("id"))
+        away_team_id = to_int(away.get("id"))
 
     h = to_int(home_score)
     a = to_int(away_score)
@@ -145,11 +156,18 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
     if not venue and game_data:
         venue = (game_data.get("venue") or {}).get("name") if isinstance(game_data.get("venue"), dict) else None
 
-    # Fler nycklar från inventering: startTimeUTC, regPeriods, gameType, limitedScoring
+    # Fler nycklar från inventering: startTimeUTC, regPeriods, gameType, limitedScoring, gameState, gameOutcome, periodDescriptor
     start_time_utc = boxscore.get("startTimeUTC")
     reg_periods = boxscore.get("regPeriods")
     game_type = boxscore.get("gameType") or (game_data.get("game") or {}).get("type")
     limited_scoring = boxscore.get("limitedScoring")
+    game_state = boxscore.get("gameState")
+    game_outcome = boxscore.get("gameOutcome") or {}
+    ot_periods = to_int(game_outcome.get("otPeriods")) if isinstance(game_outcome, dict) else None
+    last_period_type = game_outcome.get("lastPeriodType") if isinstance(game_outcome, dict) else None
+    period_descriptor = boxscore.get("periodDescriptor") or {}
+    period_number = to_int(period_descriptor.get("number")) if isinstance(period_descriptor, dict) else None
+    period_type = period_descriptor.get("periodType") if isinstance(period_descriptor, dict) else None
 
     return {
         "game_id": to_int(game_id),
@@ -157,6 +175,8 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
         "season": season,
         "home_team_abbr": home_abbr,
         "away_team_abbr": away_abbr,
+        "home_team_id": home_team_id,
+        "away_team_id": away_team_id,
         "home_score": h,
         "away_score": a,
         "home_points": home_pts,
@@ -186,6 +206,11 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
         "reg_periods": reg_periods,
         "game_type": game_type,
         "limited_scoring": limited_scoring,
+        "game_state": game_state,
+        "ot_periods": ot_periods,
+        "last_period_type": last_period_type,
+        "period_number": period_number,
+        "period_type": period_type,
     }
 
 
@@ -232,6 +257,10 @@ def _extract_players(payload: Dict[str, Any], game_id: int, game_date: str) -> L
                         "even_strength_goals_against": to_int(player.get("evenStrengthGoalsAgainst")) if is_goalie else None,
                         "power_play_goals_against": to_int(player.get("powerPlayGoalsAgainst")) if is_goalie else None,
                         "shorthanded_goals_against": to_int(player.get("shorthandedGoalsAgainst")) if is_goalie else None,
+                        "even_strength_shots_against": to_int(player.get("evenStrengthShotsAgainst")) if is_goalie else None,
+                        "power_play_shots_against": to_int(player.get("powerPlayShotsAgainst")) if is_goalie else None,
+                        "shorthanded_shots_against": to_int(player.get("shorthandedShotsAgainst")) if is_goalie else None,
+                        "gaa": _goalie_gaa(to_int(player.get("goalsAgainst")) if is_goalie else None, parse_time_to_seconds(player.get("toi"))) if is_goalie else None,
                     })
         return players_rows
 
@@ -281,14 +310,37 @@ def _extract_players(payload: Dict[str, Any], game_id: int, game_date: str) -> L
                 "even_strength_goals_against": to_int(goalie.get("evenStrengthGoalsAgainst")) if is_goalie else None,
                 "power_play_goals_against": to_int(goalie.get("powerPlayGoalsAgainst")) if is_goalie else None,
                 "shorthanded_goals_against": to_int(goalie.get("shortHandedGoalsAgainst")) if is_goalie else None,
+                "even_strength_shots_against": to_int(goalie.get("evenStrengthShotsAgainst")) if is_goalie else None,
+                "power_play_shots_against": to_int(goalie.get("powerPlayShotsAgainst")) if is_goalie else None,
+                "shorthanded_shots_against": to_int(goalie.get("shorthandedShotsAgainst")) if is_goalie else None,
+                "gaa": _goalie_gaa(to_int(goalie.get("goalsAgainst")) if is_goalie else None, parse_time_to_seconds(goalie.get("timeOnIce")) or parse_time_to_seconds(skater.get("timeOnIce"))) if is_goalie else None,
             })
 
     return players_rows
 
 
+# #region agent log
+def _debug_log(msg: str, data: dict, hypothesis_id: str = "B"):
+    try:
+        import os
+        import json
+        from mage_ai.settings.repo import get_repo_path
+        rp = get_repo_path()
+        p = os.getenv("DEBUG_LOG_PATH") or os.path.normpath(os.path.join(rp, "..", ".cursor", "debug.log"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"hypothesisId": hypothesis_id, "location": "transform_games", "message": msg, "data": data, "timestamp": __import__("time").time() * 1000}) + "\n")
+    except Exception:
+        pass
+# #endregion
+
 @transformer
 def transform_games(payload: Dict[str, Any], *args, **kwargs):
+    # Automatisk batch-körning: loadern har redan kört load→transform→export i loop; bara vidarebefordra.
+    if isinstance(payload, dict) and payload.get("batched"):
+        return payload
     games_raw = payload.get("games", [])
+    _debug_log("Transform entry", {"games_raw_len": len(games_raw), "payload_keys": list(payload.keys()) if isinstance(payload, dict) else "not_dict"}, "B")
 
     game_rows: List[Dict[str, Any]] = []
     player_rows: List[Dict[str, Any]] = []
@@ -306,7 +358,15 @@ def transform_games(payload: Dict[str, Any], *args, **kwargs):
     games_df = pd.DataFrame(game_rows)
     players_df = pd.DataFrame(player_rows)
 
+    # Ta bort dubletter (samma match eller samma spelare i samma match flera gånger)
+    if not games_df.empty and "game_id" in games_df.columns:
+        games_df = games_df.drop_duplicates(subset=["game_id"], keep="first")
+    if not players_df.empty and "game_id" in players_df.columns and "player_id" in players_df.columns:
+        players_df = players_df.drop_duplicates(subset=["game_id", "player_id"], keep="first")
+
+    _debug_log("Transform exit", {"games_rows": len(games_df), "players_rows": len(players_df), "games_empty": games_df.empty, "players_empty": players_df.empty}, "B")
     return {
         "games": games_df,
         "game_players": players_df,
+        "newest_date": payload.get("last_date"),  # för state-skrivning i export (efter lyckad skriv)
     }

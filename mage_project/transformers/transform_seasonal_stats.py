@@ -17,6 +17,16 @@ if "transformer" not in globals():
 _LEADERS_SKIP_KEYS = frozenset({"player", "team", "overlay", "shotLocationDetails"})
 
 
+def _dedup(df: pd.DataFrame, subset: List[str], keep: str = "first") -> pd.DataFrame:
+    """Ta bort dubletter på angivna kolumner. Returnerar df oförändrad om någon kolumn saknas."""
+    if df is None or df.empty:
+        return df
+    cols = [c for c in subset if c in df.columns]
+    if len(cols) != len(subset):
+        return df
+    return df.drop_duplicates(subset=cols, keep=keep)
+
+
 def _flatten_leader_value(obj: Dict[str, Any]) -> Dict[str, Any]:
     """Platta mätvärden från ett leader-objekt (t.ex. leaders.hardestShot) till skalära kolumner."""
     out: Dict[str, Any] = {}
@@ -206,6 +216,21 @@ def transform_seasonal_stats(payload: Dict[str, Any], *args, **kwargs):
     )
     if edge_teams_df.empty:
         edge_teams_df = _flatten_edge_leaders(payload.get("edge_teams", []), entity="team")
+
+    # Ta bort dubletter (flera filer per säsong eller samma data i olika källor)
+    edge_skaters_df = _dedup(edge_skaters_df, ["season", "category", "player_id"])
+    edge_goalies_df = _dedup(edge_goalies_df, ["season", "category", "player_id"])
+    edge_teams_df = _dedup(edge_teams_df, ["season", "category", "team_id"])
+
+    # Övriga seasonal-tabeller: dubletter om samma fil laddas flera gånger eller flera filer per säsong
+    if not standings_df.empty:
+        if "teamId" in standings_df.columns:
+            standings_df = _dedup(standings_df, ["season", "teamId"])
+        elif "franchiseId" in standings_df.columns:
+            standings_df = _dedup(standings_df, ["season", "franchiseId"])
+    skaters_df = _dedup(skaters_df, ["season", "playerId"])
+    goalies_df = _dedup(goalies_df, ["season", "playerId"])
+    teams_df = _dedup(teams_df, ["season", "teamId"])
 
     return {
         "standings": standings_df,

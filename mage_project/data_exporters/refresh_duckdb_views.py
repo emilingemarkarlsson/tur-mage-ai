@@ -11,8 +11,7 @@ if repo_path not in sys.path:
 if "data_exporter" not in globals():
     from mage_ai.data_preparation.decorators import data_exporter
 
-from utils.s3_utils import get_s3_bucket, get_s3_client, upload_file
-
+from utils.s3_utils import get_s3_bucket, get_s3_client, get_duckdb_s3_secret_sql, upload_file
 
 DATASETS = [
     "teams",
@@ -35,6 +34,58 @@ DATASETS = [
 ]
 
 
+def _sync_to_motherduck(db_path: str) -> None:
+    """Synkar lokal DuckDB till MotherDuck. Anropa efter conn.close() så filen inte är låst."""
+    token = os.getenv("MOTHERDUCK_TOKEN", "").strip()
+    if not token:
+        return
+    md_db = os.getenv("MOTHERDUCK_DATABASE_NAME", "nhl").strip() or "nhl"
+    abs_path = os.path.abspath(db_path)
+    if not os.path.isfile(abs_path):
+        return
+    sync_conn = duckdb.connect(":memory:")
+    try:
+        sync_conn.execute("INSTALL motherduck")
+        sync_conn.execute("LOAD motherduck")
+        sync_conn.execute(f"ATTACH '{abs_path}' AS local (READ_ONLY)")
+        sync_conn.execute(f"ATTACH 'md:{md_db}'")
+    except Exception as e:
+        err = str(e).lower()
+        if "does not exist" in err or "not found" in err or "unknown database" in err:
+            try:
+                sync_conn.execute("ATTACH 'md:'")
+                sync_conn.execute(f"CREATE DATABASE IF NOT EXISTS {md_db}")
+                sync_conn.execute(f"ATTACH 'md:{md_db}'")
+            except Exception as e2:
+                print(f"[sync_to_motherduck] Kunde inte skapa databas i MotherDuck. Skapa '{md_db}' i MotherDuck UI först: {e2}")
+                sync_conn.close()
+                return
+        else:
+            print(f"[sync_to_motherduck] Kunde inte ansluta till MotherDuck: {e}")
+            sync_conn.close()
+            return
+    try:
+        rows = sync_conn.execute(
+            "SELECT table_name FROM local.information_schema.tables WHERE table_schema = 'main' AND table_type IN ('BASE TABLE', 'VIEW') ORDER BY table_name"
+        ).fetchall()
+        tables = [r[0] for r in rows]
+    except Exception:
+        tables = DATASETS + ["player_game_stats", "team_game_stats"]
+    catalog = md_db
+    ok, fail = 0, 0
+    try:
+        for name in tables:
+            try:
+                sync_conn.execute(f'CREATE OR REPLACE TABLE "{catalog}".main."{name}" AS SELECT * FROM local.main."{name}"')
+                ok += 1
+            except Exception as e:
+                print(f"[sync_to_motherduck] {name}: {e}")
+                fail += 1
+    finally:
+        sync_conn.close()
+    print(f"[sync_to_motherduck] Klar: {ok} tabeller uppdaterade i MotherDuck ({fail} misslyckade)")
+
+
 @data_exporter
 def refresh_duckdb_views(*args, **kwargs):
     data_lake = os.getenv("DATA_LAKE_PATH", "/home/src/mage_project/data_lake")
@@ -45,26 +96,108 @@ def refresh_duckdb_views(*args, **kwargs):
     db_path = os.path.join(gold, "nhl.duckdb")
     conn = duckdb.connect(db_path)
 
+    # Relativ path från projektrot (tur-mage-ai / /home/src) så att vyerna fungerar när DB öppnas på Mac eller i container.
+    workspace_root = os.path.dirname(os.path.dirname(data_lake))
     for dataset in DATASETS:
+        dataset_dir = os.path.join(silver, dataset)
         dataset_path = os.path.join(silver, dataset, "**", "*.parquet")
-        if not os.path.exists(os.path.join(silver, dataset)):
+        exists = os.path.exists(dataset_dir)
+        if not exists:
             continue
-        view_sql = f"CREATE OR REPLACE VIEW {dataset} AS SELECT * FROM parquet_scan('{dataset_path}');"
+        rel_parquet = os.path.relpath(dataset_path, workspace_root).replace("\\", "/")
+        view_sql = f"CREATE OR REPLACE VIEW {dataset} AS SELECT * FROM parquet_scan('{rel_parquet}');"
         conn.execute(view_sql)
 
-    conn.close()
+    # Player stats per game (one row per player per game) with player names. English view name.
+    try:
+        conn.execute("""
+            CREATE OR REPLACE VIEW player_game_stats AS
+            SELECT gp.*,
+                   p.firstName AS player_first_name,
+                   p.lastName AS player_last_name
+            FROM game_players gp
+            LEFT JOIN players p ON p.id = gp.player_id
+        """)
+    except Exception:
+        pass  # game_players or players missing on first run
 
-    # Upload DuckDB to S3 when DATA_LAKE_SINK=s3 (t.ex. Hetzner). S3 blir enda kopian.
+    # Team stats per game (one row per team per game; unpivot of games: home + away).
+    # Försök full schema först; vid äldre Silver (saknar game_state, ot_periods, home_team_id) använd minimal vy.
+    _team_game_stats_sql_full = """
+        CREATE OR REPLACE VIEW team_game_stats AS
+        SELECT g.game_id, g.game_date, g.season, g.status,
+          g.game_state, g.ot_periods, g.last_period_type, g.period_number, g.period_type,
+          TRUE AS is_home, g.home_team_id AS team_id, g.home_team_abbr AS team_abbr,
+          g.away_team_abbr AS opponent_abbr, g.home_score AS goals_for, g.away_score AS goals_against,
+          g.home_points AS team_points, g.home_sog AS sog, g.home_pp_goals AS pp_goals,
+          g.home_pp_opportunities AS pp_opportunities, g.home_hits AS hits,
+          g.home_blocked AS blocked_shots, g.home_pim AS pim, g.home_giveaways AS giveaways,
+          g.home_takeaways AS takeaways, g.home_faceoff_pct AS faceoff_win_pct,
+          g.venue, g.venue_location, g.start_time_utc, g.reg_periods, g.game_type, g.limited_scoring
+        FROM games g
+        UNION ALL
+        SELECT g.game_id, g.game_date, g.season, g.status,
+          g.game_state, g.ot_periods, g.last_period_type, g.period_number, g.period_type,
+          FALSE AS is_home, g.away_team_id AS team_id, g.away_team_abbr AS team_abbr,
+          g.home_team_abbr AS opponent_abbr, g.away_score AS goals_for, g.home_score AS goals_against,
+          g.away_points AS team_points, g.away_sog AS sog, g.away_pp_goals AS pp_goals,
+          g.away_pp_opportunities AS pp_opportunities, g.away_hits AS hits,
+          g.away_blocked AS blocked_shots, g.away_pim AS pim, g.away_giveaways AS giveaways,
+          g.away_takeaways AS takeaways, g.away_faceoff_pct AS faceoff_win_pct,
+          g.venue, g.venue_location, g.start_time_utc, g.reg_periods, g.game_type, g.limited_scoring
+        FROM games g
+    """
+    _team_game_stats_sql_minimal = """
+        CREATE OR REPLACE VIEW team_game_stats AS
+        SELECT g.game_id, g.game_date, g.season, g.status,
+          TRUE AS is_home, g.home_team_abbr AS team_abbr,
+          g.away_team_abbr AS opponent_abbr, g.home_score AS goals_for, g.away_score AS goals_against,
+          g.home_points AS team_points, g.home_sog AS sog, g.home_pp_goals AS pp_goals,
+          g.home_pp_opportunities AS pp_opportunities, g.home_hits AS hits,
+          g.home_blocked AS blocked_shots, g.home_pim AS pim, g.home_giveaways AS giveaways,
+          g.home_takeaways AS takeaways, g.home_faceoff_pct AS faceoff_win_pct,
+          g.venue, g.venue_location, g.start_time_utc, g.reg_periods, g.game_type, g.limited_scoring
+        FROM games g
+        UNION ALL
+        SELECT g.game_id, g.game_date, g.season, g.status,
+          FALSE AS is_home, g.away_team_abbr AS team_abbr,
+          g.home_team_abbr AS opponent_abbr, g.away_score AS goals_for, g.home_score AS goals_against,
+          g.away_points AS team_points, g.away_sog AS sog, g.away_pp_goals AS pp_goals,
+          g.away_pp_opportunities AS pp_opportunities, g.away_hits AS hits,
+          g.away_blocked AS blocked_shots, g.away_pim AS pim, g.away_giveaways AS giveaways,
+          g.away_takeaways AS takeaways, g.away_faceoff_pct AS faceoff_win_pct,
+          g.venue, g.venue_location, g.start_time_utc, g.reg_periods, g.game_type, g.limited_scoring
+        FROM games g
+    """
+    try:
+        conn.execute(_team_game_stats_sql_full)
+    except Exception:
+        try:
+            conn.execute(_team_game_stats_sql_minimal)
+        except Exception:
+            pass  # games missing or schema too old
+
+    # Synka till MotherDuck (måste ske efter conn.close så filen inte är låst)
+    conn.close()
+    _sync_to_motherduck(db_path)
+
+    # Vid local: behåll filen (för Streamlit/validate). Vid s3: ladda upp och ta bort lokal kopia.
     sink = os.getenv("DATA_LAKE_SINK", "local").strip().lower()
-    if sink == "s3" and os.path.isfile(db_path):
-        s3_prefix = os.getenv("S3_DATA_LAKE_PREFIX", "nhl-analytics")
-        s3_bucket = os.getenv("S3_DATA_LAKE_BUCKET") or get_s3_bucket()
-        if s3_bucket:
-            client = get_s3_client()
-            key = f"{s3_prefix}/gold/nhl.duckdb"
-            upload_file(client, s3_bucket, key, db_path)
-            # Ta bort lokal fil så den inte fyller disken; databasen finns bara i S3.
-            try:
-                os.remove(db_path)
-            except OSError:
-                pass
+    if sink != "s3":
+        print(f"[refresh_duckdb_views] DATA_LAKE_SINK=local – Gold sparad lokalt: {db_path}")
+        return
+
+    if not os.path.isfile(db_path):
+        return
+    s3_prefix = os.getenv("S3_DATA_LAKE_PREFIX", "nhl-analytics")
+    s3_bucket = os.getenv("S3_DATA_LAKE_BUCKET") or get_s3_bucket()
+    if not s3_bucket:
+        return
+    client = get_s3_client()
+    key = f"{s3_prefix}/gold/nhl.duckdb"
+    upload_file(client, s3_bucket, key, db_path)
+    try:
+        os.remove(db_path)
+    except OSError:
+        pass
+    print("[refresh_duckdb_views] Gold uppladdad till S3, lokal fil borttagen.")

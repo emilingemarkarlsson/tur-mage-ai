@@ -1,6 +1,6 @@
 mage-ai[s3,dbt]
 polars
-duckdb
+duckdb>=1.4.4
 boto3
 streamlit
 python-dotenv

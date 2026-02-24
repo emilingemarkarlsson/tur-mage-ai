@@ -169,8 +169,15 @@ def _helpers_to_rows(helpers_payloads: List[Dict[str, Any]]) -> List[Dict[str, A
     """Platta helpers (t.ex. game_ids_{season}.json) till season + game_id."""
     rows: List[Dict[str, Any]] = []
     for item in helpers_payloads or []:
-        key = item.get("key") or ""
-        data = item.get("payload")
+        # item kan vara dict (key + payload) eller rå list (t.ex. [id1, id2])
+        if isinstance(item, list):
+            key = ""
+            data = item
+        elif isinstance(item, dict):
+            key = item.get("key") or ""
+            data = item.get("payload")
+        else:
+            continue
         if data is None:
             data = {}
         # Filnamn game_ids_20252026.json -> season 20252026
@@ -179,6 +186,8 @@ def _helpers_to_rows(helpers_payloads: List[Dict[str, Any]]) -> List[Dict[str, A
         if isinstance(data, list):
             game_ids = data
         else:
+            if not isinstance(data, dict):
+                continue
             if not season and isinstance(data.get("season"), str):
                 season = data.get("season")
             game_ids = (
@@ -341,6 +350,15 @@ def transform_dimensions(payload: Dict[str, Any], *args, **kwargs):
     glossary_df = pd.DataFrame(glossary_rows) if glossary_rows else pd.DataFrame()
     draft_rows = _draft_to_rows(draft_raw)
     draft_df = pd.DataFrame(draft_rows) if draft_rows else pd.DataFrame()
+
+    # Ta bort dubletter (samma match i flera schedule-filer, samma game_id i flera helpers, samma roster i flera filer)
+    if not schedule_df.empty and "gamePk" in schedule_df.columns:
+        subset = ["schedule_date", "gamePk"] if "schedule_date" in schedule_df.columns else ["gamePk"]
+        schedule_df = schedule_df.drop_duplicates(subset=subset, keep="first")
+    if not game_ids_df.empty and "season" in game_ids_df.columns and "game_id" in game_ids_df.columns:
+        game_ids_df = game_ids_df.drop_duplicates(subset=["season", "game_id"], keep="first")
+    if not roster_df.empty and "season" in roster_df.columns and "team_id" in roster_df.columns and "player_id" in roster_df.columns:
+        roster_df = roster_df.drop_duplicates(subset=["season", "team_id", "player_id"], keep="first")
 
     return {
         "teams": teams_df,

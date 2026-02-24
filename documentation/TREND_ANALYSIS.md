@@ -2,6 +2,17 @@
 
 Med nuvarande datastruktur kan du ta ut **så detaljerade trender per match som källan tillåter** – för lag och spelare. Detta dokument beskriver vilka tabeller och fält som används samt exempel på frågor.
 
+## Snabbreferens: tabell och nycklar per behov
+
+| Behov | Tabell(er) | Nycklar |
+|-------|------------|--------|
+| Spelarstatistik per matchdatum | `player_game_stats` (eller `game_players` + `players`) | `game_date`, `player_id`, `team_abbr` |
+| Lagstatistik per matchdatum | `team_game_stats` (eller `games`) | `game_date`, `team_abbr`, `opponent_abbr` |
+
+- **Spelare:** Använd **`player_game_stats`** (har redan `player_first_name`, `player_last_name`). Filtrera på `game_date` / `player_id`.
+- **Lag:** Använd **`team_game_stats`** (en rad per lag per match: `goals_for`, `goals_against`, `sog`, `is_home`). Filtrera på `team_abbr`. Alternativt `games` med hemma/borta-kolumner.
+- Alla Gold-tabellnamn är på engelska; se **documentation/GOLD_SCHEMA.md** för full lista och namngivningsstandard.
+
 ---
 
 ## 1. Vilka tabeller och fält används?
@@ -231,9 +242,9 @@ ORDER BY game_date;
 
 ## 8. Sammanfattning
 
-- **Lag:** Använd **games** för alla lagstatistik per match (poäng, mål, SOG, hits, faceoff, giveaways/takeaways, venue).
-- **Spelare:** Använd **game_players** för detaljerad statistik per match (poäng, mål, PP/SH-mål, TOI, hits, shifts, giveaways/takeaways, faceoff %, målvaktsstatistik per situation).
-- **Hemma/borta:** Filtrera på `game_players.is_home` för trender per kontext.
-- **Arena:** Gruppera eller filtrera på `games.venue` / `games.venue_location`.
+- **Lag:** Använd **team_game_stats** (en rad per lag per match) eller **games** (en rad per match). Kolumner: goals_for, goals_against, sog, hits, venue, m.m.
+- **Spelare:** Använd **player_game_stats** (med namn) eller **game_players** för statistik per match (mål, assist, TOI, hits, målvakt per situation).
+- **Hemma/borta:** Filtrera på `is_home` i `game_players` / `player_game_stats` eller `team_game_stats`.
+- **Arena:** `games.venue` / `games.venue_location`.
 
-Efter att du kört **games_pipeline** och **refresh_duckdb_views** finns alla kolumner i Silver och Gold; du behöver inte räkna ut dem själv. I Streamlit kan du köra frågorna mot `nhl.games` / `nhl.game_players` (S3) eller lokala vyer och plotta linjediagram över `game_date`.
+Alla vy-/tabellnamn i Gold är på engelska (se **GOLD_SCHEMA.md**). Efter **games_pipeline** + **refresh_duckdb_views** finns vyer som `games`, `game_players`, `player_game_stats`, `team_game_stats` i DuckDB; använd dem i Streamlit eller SQL.

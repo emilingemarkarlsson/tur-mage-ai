@@ -81,3 +81,31 @@ def list_unique_dates_from_keys(keys: Iterable[str], prefix: str) -> List[str]:
         if parts and len(parts[0]) == 10:
             dates.add(parts[0])
     return sorted(dates)
+
+
+def get_duckdb_s3_secret_sql(scope_bucket: str = "") -> str:
+    """Return CREATE SECRET SQL for DuckDB httpfs (Hetzner/MinIO). Used by refresh_duckdb_views and Streamlit."""
+    source = _get_source()
+    if source == "minio":
+        endpoint = os.getenv("MINIO_ENDPOINT") or ""
+        access = os.getenv("MINIO_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY_ID") or ""
+        secret = os.getenv("MINIO_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY") or ""
+        region = os.getenv("MINIO_REGION") or os.getenv("AWS_REGION", "us-east-1")
+    else:
+        endpoint = os.getenv("HETZNER_ENDPOINT") or os.getenv("S3_ENDPOINT") or ""
+        access = os.getenv("HETZNER_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY_ID") or ""
+        secret = os.getenv("HETZNER_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY") or ""
+        region = os.getenv("HETZNER_REGION") or os.getenv("AWS_REGION", "eu-central")
+    endpoint_host = (endpoint or "").strip().replace("https://", "").replace("http://", "").rstrip("/")
+    def esc(s):
+        return (s or "").replace("'", "''")
+    parts = [
+        "CREATE OR REPLACE SECRET s3_nhl (TYPE S3, PROVIDER config, ",
+        f"KEY_ID '{esc(access)}', SECRET '{esc(secret)}', REGION '{esc(region)}', ",
+        f"ENDPOINT '{esc(endpoint_host)}', URL_STYLE 'path'",
+    ]
+    if scope_bucket:
+        scope_val = f"s3://{scope_bucket.rstrip('/')}/"
+        parts.append(f", SCOPE '{esc(scope_val)}'")
+    parts.append(");")
+    return "".join(parts)

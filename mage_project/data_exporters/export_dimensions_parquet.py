@@ -66,14 +66,16 @@ def _write_df(df, base_path: str, partition_col: str = None, s3_prefix: str = No
             file_path = os.path.join(part_dir, f"part-{datetime.utcnow().timestamp()}.parquet")
             part_df.write_parquet(file_path)
             if s3_client:
-                rel_path = os.path.relpath(file_path, "/home/src/mage_project/data_lake")
+                _data_lake = os.getenv("DATA_LAKE_PATH", "/home/src/mage_project/data_lake")
+                rel_path = os.path.relpath(file_path, _data_lake)
                 key = f"{s3_prefix}/{rel_path}"
                 upload_file(s3_client, s3_bucket, key, file_path)
     else:
         file_path = os.path.join(base_path, f"part-{datetime.utcnow().timestamp()}.parquet")
         pl_df.write_parquet(file_path)
         if s3_client:
-            rel_path = os.path.relpath(file_path, "/home/src/mage_project/data_lake")
+            _data_lake = os.getenv("DATA_LAKE_PATH", "/home/src/mage_project/data_lake")
+            rel_path = os.path.relpath(file_path, _data_lake)
             key = f"{s3_prefix}/{rel_path}"
             upload_file(s3_client, s3_bucket, key, file_path)
 
