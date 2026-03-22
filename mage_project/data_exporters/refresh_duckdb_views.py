@@ -157,7 +157,7 @@ def refresh_duckdb_views(*args, **kwargs):
         if not exists:
             continue
         rel_parquet = os.path.relpath(dataset_path, workspace_root).replace("\\", "/")
-        view_sql = f"CREATE OR REPLACE VIEW {dataset} AS SELECT * FROM parquet_scan('{rel_parquet}');"
+        view_sql = f"CREATE OR REPLACE VIEW {dataset} AS SELECT * FROM parquet_scan('{rel_parquet}', union_by_name=True);"
         conn.execute(view_sql)
 
     # Player stats per game (one row per player per game) with player names. English view name.

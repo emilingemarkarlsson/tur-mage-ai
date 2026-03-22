@@ -1,3 +1,4 @@
+import re
 import sys
 
 from mage_ai.settings.repo import get_repo_path
@@ -19,9 +20,11 @@ def load_seasonal_stats(*args, **kwargs):
     if not bucket:
         raise ValueError("S3 bucket is not configured (HETZNER_BUCKET or S3_BUCKET).")
 
+    # Historiska standings: en fil per säsong (YYYYXXXX_standings.json) på toppnivå.
+    # Undermappar (t.ex. 20252026/) innehåller daily-snapshots med annat schema – hoppas över.
     standings_keys = [
-        k for k in list_keys(client, bucket, "nhl-data/basic/standings/")
-        if k.endswith(".json")
+        k for k in list_keys(client, bucket, "nhl-data/standings/")
+        if k.endswith("_standings.json") and k.count("/") == 2
     ]
     skater_keys = [
         k for k in list_keys(client, bucket, "nhl-data/stats/skaters/")
@@ -50,9 +53,13 @@ def load_seasonal_stats(*args, **kwargs):
 
     def load_many(keys):
         items = []
-        for key in keys:
-            season = key.split("_")[-1].replace(".json", "")
-            items.append({"season": season, "key": key, "payload": read_json(client, bucket, key)})
+        for key in sorted(set(keys)):
+            m = re.search(r'(20\d{6})', key)
+            season = m.group(1) if m else key.split("_")[-1].replace(".json", "")
+            try:
+                items.append({"season": season, "key": key, "payload": read_json(client, bucket, key)})
+            except Exception as e:
+                print(f"[load_seasonal_stats] Hoppar över {key}: {e}")
         return items
 
     return {

@@ -137,6 +137,11 @@ def _flatten(items: List[Dict[str, Any]], preferred_key_paths: List[Any]) -> pd.
                 break
         if not data and isinstance(payload, list):
             data = payload
+        if not data and isinstance(payload, dict):
+            # Fallback: payload["data"] direkt som lista (t.ex. historiska stats-filer)
+            raw = payload.get("data")
+            if isinstance(raw, list):
+                data = raw
         for row in data:
             row = dict(row) if isinstance(row, dict) else {}
             row["season"] = season
@@ -168,6 +173,10 @@ def _flatten_standings(items: List[Dict[str, Any]]) -> pd.DataFrame:
         else:
             for row in data:
                 row = dict(row) if isinstance(row, dict) else {}
+                # Platta nested dicts med "default"-nyckel (t.ex. teamAbbrev: {"default": "NYR"})
+                for k, v in list(row.items()):
+                    if isinstance(v, dict) and "default" in v:
+                        row[k] = v["default"]
                 row["season"] = season
                 rows.append(row)
     return pd.DataFrame(rows)
