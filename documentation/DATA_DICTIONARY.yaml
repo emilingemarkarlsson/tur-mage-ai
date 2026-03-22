@@ -1,445 +1,842 @@
 # Data Dictionary – NHL Gold (MotherDuck / DuckDB)
 #
-# Beskriver varje tabell och kolumn för att:
-# 1. Dokumentera vilken data som finns
-# 2. Ge Insight Engine kontext för detectors (vilka kolumner använda för vilket mönster)
-# 3. Möjliggöra automatisk formulering av insikter (LLM eller template)
-#
-# Uppdatera vid schemaändringar. Kör scripts/analyze_motherduck_data.py för att verifiera
-# att kolumner finns i MotherDuck.
+# Single source of truth for table and column descriptions.
+# Run scripts/sync_data_dictionary.py to sync to MotherDuck (COMMENT ON TABLE/COLUMN).
+# Run scripts/validate_data_dictionary.py to verify columns exist in MotherDuck.
 
-version: "1.0"
+version: "1.1"
 league: nhl
-updated: "2026-02-24"
+updated: "2026-03-22"
 
 tables:
   # ---------------------------------------------------------------------------
-  # Game-level (Insight Engine core)
+  # Game-level
   # ---------------------------------------------------------------------------
 
   games:
-    description: En rad per match. Innehåller hemmalag, bortalag, mål, status, lagnivå-statistik (SOG, PP, hits, etc.).
-    grain: "En rad per game_id"
+    description: One row per game. Contains home/away teams, goals, and team-level box score stats (SOG, PP, hits, etc.).
+    grain: "One row per game_id"
     key_columns: [game_id]
     insight_engine:
-      primary_for: []  # Använd team_game_stats för lag-trender istället
+      primary_for: []
       join_keys: [game_id, game_date]
-
     columns:
       game_id:
         type: BIGINT
-        description: Unikt match-ID (NHL API gamePk)
+        description: Unique game ID (NHL API gamePk)
       game_date:
         type: DATE
-        description: Datum för matchen. Använd för sortering och lookback.
+        description: Game date. Use for sorting and lookback windows.
       season:
         type: BIGINT
-        description: Säsong (t.ex. 20242025). Format YYYY(YYYY+1).
-      home_team_abbr:
-        type: VARCHAR
-        description: Hemmalag förkortning (t.ex. TOR, BOS)
-      away_team_abbr:
-        type: VARCHAR
-        description: Bortalag förkortning
-      home_team_id:
-        type: BIGINT
-        description: Hemmalag NHL ID
-      away_team_id:
-        type: BIGINT
-        description: Bortalag NHL ID
-      home_score:
-        type: BIGINT
-        description: Mål hemmalag
-      away_score:
-        type: BIGINT
-        description: Mål bortalag
-      home_points:
-        type: BIGINT
-        description: NHL-poäng hemmalag (2 vinst, 1 OT/SO-förlust, 0 förlust)
-      away_points:
-        type: BIGINT
-        description: NHL-poäng bortalag
+        description: Season (e.g. 20242025). Format YYYYZZZZ where ZZZZ = YYYY+1.
       status:
         type: VARCHAR
-        description: Matchens status (t.ex. FINAL, LIVE)
+        description: Game status (FINAL, LIVE, etc.)
+      game_state:
+        type: VARCHAR
+        description: Detailed game state (OFF, LIVE, CRIT, etc.)
+      game_type:
+        type: VARCHAR
+        description: Game type (2=regular season, 3=playoffs)
+      home_team_abbr:
+        type: VARCHAR
+        description: Home team abbreviation (e.g. TOR, BOS)
+      away_team_abbr:
+        type: VARCHAR
+        description: Away team abbreviation
+      home_team_id:
+        type: BIGINT
+        description: Home team NHL ID
+      away_team_id:
+        type: BIGINT
+        description: Away team NHL ID
+      home_score:
+        type: BIGINT
+        description: Home team goals (final)
+      away_score:
+        type: BIGINT
+        description: Away team goals (final)
+      home_points:
+        type: BIGINT
+        description: NHL standings points for home team (2=win, 1=OT/SO loss, 0=loss)
+      away_points:
+        type: BIGINT
+        description: NHL standings points for away team
       home_sog:
         type: BIGINT
-        description: Skott på mål hemmalag
+        description: Home team shots on goal
       away_sog:
         type: BIGINT
-        description: Skott på mål bortalag
+        description: Away team shots on goal
       home_pp_goals:
         type: DOUBLE
-        description: Powerplay-mål hemmalag
+        description: Home team power play goals
       away_pp_goals:
         type: DOUBLE
-        description: Powerplay-mål bortalag
+        description: Away team power play goals
+      home_pp_opportunities:
+        type: DOUBLE
+        description: Home team power play opportunities
+      away_pp_opportunities:
+        type: DOUBLE
+        description: Away team power play opportunities
       home_hits:
         type: BIGINT
-        description: Tacklingar hemmalag
+        description: Home team hits
       away_hits:
         type: BIGINT
-        description: Tacklingar bortalag
+        description: Away team hits
       home_blocked:
         type: BIGINT
-        description: Blockade skott hemmalag
+        description: Home team blocked shots
       away_blocked:
         type: BIGINT
-        description: Blockade skott bortalag
+        description: Away team blocked shots
+      home_pim:
+        type: DOUBLE
+        description: Home team penalty minutes
+      away_pim:
+        type: DOUBLE
+        description: Away team penalty minutes
+      home_faceoff_pct:
+        type: DOUBLE
+        description: Home team faceoff win percentage (0–100)
+      away_faceoff_pct:
+        type: DOUBLE
+        description: Away team faceoff win percentage (0–100)
+      ot_periods:
+        type: BIGINT
+        description: Number of overtime periods played (0 = no OT)
+      last_period_type:
+        type: VARCHAR
+        description: Type of the final period (REG, OT, SO)
       venue:
         type: VARCHAR
-        description: Arenanamn
+        description: Arena name
       venue_location:
         type: VARCHAR
-        description: Stad/plats för arenan
+        description: City/location
       start_time_utc:
         type: VARCHAR
-        description: Starttid UTC
+        description: Game start time in UTC
 
   team_game_stats:
-    description: En rad per lag per match. Unpivot av games – enklare för lag-trender (poäng per match, mål per match).
-    grain: "En rad per (game_id, team_abbr)"
+    description: One row per team per game (unpivot of games). Primary table for team trends – points, goals, SOG per game.
+    grain: "One row per (game_id, team_abbr)"
     key_columns: [game_id, team_abbr]
     insight_engine:
       primary_for: [team_points_streak, team_goals_trend, team_sog_trend]
       join_keys: [game_id, game_date]
-
     columns:
       game_id:
         type: BIGINT
-        description: Match-ID
+        description: Game ID
       game_date:
         type: DATE
-        description: Datum. Använd ORDER BY game_date för trendanalys.
+        description: Game date. Use ORDER BY game_date for trend analysis.
       season:
         type: BIGINT
-        description: Säsong
+        description: Season
       team_abbr:
         type: VARCHAR
-        description: Lagförkortning (t.ex. TOR)
+        description: Team abbreviation (e.g. TOR)
+      team_id:
+        type: BIGINT
+        description: NHL team ID
       opponent_abbr:
         type: VARCHAR
-        description: Motståndarlag
+        description: Opponent team abbreviation
       is_home:
         type: BOOLEAN
-        description: True = hemmamatch, False = bortamatch. För hemma/borta-splits.
+        description: True = home game. Use for home/away splits.
       goals_for:
         type: BIGINT
-        description: Mål gjorda av laget denna match
+        description: Goals scored
       goals_against:
         type: BIGINT
-        description: Mål insläppta
+        description: Goals allowed
       team_points:
         type: BIGINT
-        description: Poäng denna match (2 vinst, 1 OT-förlust, 0 förlust). Huvudsaklig för points-per-game-trender.
+        description: NHL standings points this game (2/1/0). Primary for points-per-game trends.
       sog:
         type: BIGINT
-        description: Skott på mål
+        description: Shots on goal
       pp_goals:
         type: DOUBLE
-        description: Powerplay-mål
+        description: Power play goals
+      pp_opportunities:
+        type: DOUBLE
+        description: Power play opportunities
       hits:
         type: BIGINT
-        description: Tacklingar
+        description: Hits
       blocked_shots:
         type: BIGINT
-        description: Blockade skott
+        description: Blocked shots
+      pim:
+        type: DOUBLE
+        description: Penalty minutes
+      faceoff_win_pct:
+        type: DOUBLE
+        description: Faceoff win percentage (0–100)
       venue:
         type: VARCHAR
-        description: Arena (för arena-trender)
+        description: Arena name
+
+  team_game_stats_extended:
+    description: team_game_stats enriched with conference and division (JOIN with teams). Use for conference/division comparisons.
+    grain: "One row per (game_id, team_abbr)"
+    key_columns: [game_id, team_abbr]
+    columns:
+      conference_abbr:
+        type: VARCHAR
+        description: Conference abbreviation (E=Eastern, W=Western)
+      conference_name:
+        type: VARCHAR
+        description: Conference name
+      division_abbr:
+        type: VARCHAR
+        description: Division abbreviation (A, M, C, P)
+      division_name:
+        type: VARCHAR
+        description: Division name (Atlantic, Metropolitan, Central, Pacific)
 
   player_game_stats:
-    description: En rad per spelare per match, med spelarnamn. Använd för spelar-trender (poäng, mål, assist, TOI).
-    grain: "En rad per (game_id, player_id)"
+    description: One row per player per game, including player names. Primary table for player trends – points, goals, TOI.
+    grain: "One row per (game_id, player_id)"
     key_columns: [game_id, player_id]
     insight_engine:
       primary_for: [player_breakout, player_points_trend, player_goals_streak]
       join_keys: [game_id, game_date]
-
     columns:
       game_id:
         type: BIGINT
-        description: Match-ID
+        description: Game ID
       game_date:
         type: DATE
-        description: Datum
+        description: Game date
       player_id:
         type: BIGINT
-        description: Spelar-ID (NHL)
+        description: NHL player ID
       player_first_name:
         type: VARCHAR
-        description: Förnamn (för human-readable output)
+        description: First name
       player_last_name:
         type: VARCHAR
-        description: Efternamn
+        description: Last name
       team_abbr:
         type: VARCHAR
-        description: Lag
+        description: Team abbreviation
       is_home:
         type: BOOLEAN
-        description: Hemma eller borta
+        description: True = home game
       position:
         type: VARCHAR
-        description: F, D, C, LW, RW, G. Filtrera position='G' för målvakter.
+        description: Position (F, D, C, LW, RW, G). Filter G for goalies.
       goals:
         type: DOUBLE
-        description: Mål denna match
+        description: Goals this game
       assists:
         type: DOUBLE
-        description: Assists
+        description: Assists this game
       points:
         type: DOUBLE
-        description: Poäng (mål + assist). Huvudsaklig för breakout/trend-detection.
+        description: Points (goals + assists). Primary for breakout/trend detection.
       plus_minus:
         type: DOUBLE
-        description: Plus/minus
+        description: Plus/minus rating
       shots:
         type: DOUBLE
-        description: Skott på mål (SOG)
+        description: Shots on goal
       toi_seconds:
         type: BIGINT
-        description: Speltid i sekunder
+        description: Time on ice in seconds. Divide by 60 for minutes.
       hits:
         type: DOUBLE
-        description: Tacklingar
+        description: Hits
       blocked_shots:
         type: DOUBLE
-        description: Blockade skott
+        description: Blocked shots
       power_play_goals:
         type: DOUBLE
-        description: Powerplay-mål
+        description: Power play goals
       short_handed_goals:
         type: VARCHAR
-        description: Uppspelade mål
-      faceoff_win_pct:
-        type: DOUBLE
-        description: Vunna tekningar (0–1 eller procent)
+        description: Short-handed goals
       saves:
         type: DOUBLE
-        description: Räddningar (målvakter)
+        description: Saves (goalies only)
       shots_against:
         type: DOUBLE
-        description: Skott mot (målvakter)
+        description: Shots against (goalies only)
       save_pct:
         type: DOUBLE
-        description: Räddningsprocent (0–1). Huvudsaklig för goalie_trend-detection.
+        description: Save percentage (0–1). Primary for goalie trend detection.
       goals_against:
         type: DOUBLE
-        description: Insläppta mål (målvakter)
-      even_strength_goals_against:
-        type: DOUBLE
-        description: Insläppta jämnstyrka (målvakter)
-      power_play_goals_against:
-        type: DOUBLE
-        description: Insläppta powerplay (målvakter)
-      shorthanded_goals_against:
-        type: DOUBLE
-        description: Insläppta short-handed (målvakter)
+        description: Goals allowed (goalies only)
 
   game_players:
-    description: Samma som player_game_stats men utan spelarnamn (join till players). Raw spelarstatistik per match.
-    grain: "En rad per (game_id, player_id)"
+    description: Raw per-player box score per game without player names. Use player_game_stats for analysis (includes names via JOIN).
+    grain: "One row per (game_id, player_id)"
     key_columns: [game_id, player_id]
-    insight_engine:
-      primary_for: []
-      join_keys: [game_id, game_date]
-    columns: {}  # Samma kolumner som player_game_stats (utom player_first_name, player_last_name)
+    columns: {}
 
   game_events:
-    description: Play-by-play händelser från playByPlay (mål, skott, straff, faceoff, hit, etc.). Finns bara om källfilen har playByPlay.
-    grain: "En rad per (game_id, event_id)"
+    description: Play-by-play events (goals, shots, penalties, faceoffs, hits, etc.). 6.6M rows covering 2010–2026.
+    grain: "One row per (game_id, event_id)"
     key_columns: [game_id, event_id]
-    insight_engine:
-      primary_for: []  # Framtida: shot_quality, event_timeline
     columns:
       game_id:
         type: BIGINT
-        description: Match-ID
+        description: Game ID
       game_date:
         type: DATE
-        description: Datum
+        description: Game date
       event_id:
         type: BIGINT
-        description: Unikt ID per händelse
+        description: Event ID (sequential within a game)
       period:
         type: BIGINT
-        description: Period (1, 2, 3, 4 för OT)
+        description: Period number (1, 2, 3; 4+ = overtime)
       period_type:
         type: VARCHAR
-        description: REGULAR, OVERTIME, SHOOTOUT
+        description: REGULAR, OVERTIME, or SHOOTOUT
       time_remaining:
         type: VARCHAR
-        description: T.ex. "15:30"
+        description: Time elapsed in period (MM:SS)
       event_type:
         type: VARCHAR
-        description: Goal, Shot, Penalty, Faceoff, Hit, Block, etc.
+        description: Event type (GOAL, SHOT, PENALTY, FACEOFF, HIT, BLOCKED_SHOT, etc.)
       team_abbr:
         type: VARCHAR
-        description: Lag
+        description: Team that performed the event
       player_id:
         type: BIGINT
-        description: Huvudspelare (t.ex. målskytt)
+        description: Primary player (e.g. goal scorer, shooter)
       secondary_player_id:
         type: BIGINT
-        description: Assisterande (mål)
+        description: Secondary player (e.g. assist on a goal)
       description:
         type: VARCHAR
-        description: Händelsebeskrivning
+        description: Free-text description of the event
 
   game_stories:
-    description: Game story (rubrik, brödtext) från gameStory. Finns bara om källfilen har gameStory. För texthantering/LLM.
-    grain: "En rad per game_id"
+    description: Game story narrative (headline + body text) from NHL gameStory. Only available for games that have this data.
+    grain: "One row per game_id"
     key_columns: [game_id]
     columns:
       game_id:
         type: BIGINT
-        description: Match-ID
+        description: Game ID
       game_date:
         type: DATE
-        description: Datum
+        description: Game date
       headline:
         type: VARCHAR
-        description: Rubrik
+        description: Story headline
       body:
         type: VARCHAR
-        description: Brödtext
+        description: Body text (up to 50,000 characters)
 
   # ---------------------------------------------------------------------------
-  # Dimension / referens
+  # Dimensions / reference
   # ---------------------------------------------------------------------------
 
   teams:
-    description: En rad per lag. Conference, division, namn.
-    grain: "En rad per team"
+    description: One row per NHL team. Contains name, abbreviation, conference, and division.
+    grain: "One row per team"
     key_columns: [abbr]
     columns:
-      id:
-        type: BIGINT
-        description: NHL team ID
       abbr:
         type: VARCHAR
-        description: Förkortning (TOR, BOS, …)
+        description: Team abbreviation (e.g. TOR, BOS). Primary join key against game tables.
+      franchise_id:
+        type: BIGINT
+        description: NHL franchise ID
       name:
         type: VARCHAR
-        description: Fullt namn
-      conference:
+        description: Full team name
+      common_name:
         type: VARCHAR
-        description: Conference
-      division:
+        description: Short team name (e.g. Maple Leafs)
+      conference_abbr:
         type: VARCHAR
-        description: Division
+        description: Conference abbreviation (E, W)
+      conference_name:
+        type: VARCHAR
+        description: Conference name (Eastern, Western)
+      division_abbr:
+        type: VARCHAR
+        description: Division abbreviation (A, M, C, P)
+      division_name:
+        type: VARCHAR
+        description: Division name (Atlantic, Metropolitan, Central, Pacific)
 
   players:
-    description: En rad per spelare. Namn, position, födelsedatum.
-    grain: "En rad per player"
+    description: One row per player. Name, position, and physical attributes.
+    grain: "One row per player"
     key_columns: [id]
     columns:
       id:
         type: BIGINT
-        description: NHL player ID
+        description: NHL player ID. Join against game_players.player_id.
       firstName:
         type: VARCHAR
-        description: Förnamn
+        description: First name
       lastName:
         type: VARCHAR
-        description: Efternamn
+        description: Last name
       positionCode:
         type: VARCHAR
-        description: Position (F, D, G, …)
+        description: Position code (C, LW, RW, D, G)
+      shootsCatches:
+        type: VARCHAR
+        description: Shoots/catches handedness (L/R)
+      birthDate:
+        type: VARCHAR
+        description: Date of birth (YYYY-MM-DD)
+      birthCountry:
+        type: VARCHAR
+        description: Birth country (ISO code)
+      heightInCentimeters:
+        type: BIGINT
+        description: Height in centimeters
+      weightInKilograms:
+        type: BIGINT
+        description: Weight in kilograms
+
+  roster:
+    description: Players per team per season. Shows which players belonged to which team.
+    grain: "One row per (season, team_id, player_id)"
+    key_columns: [season, team_id, player_id]
+    columns:
+      season:
+        type: VARCHAR
+        description: Season (e.g. 20252026)
+      team_id:
+        type: VARCHAR
+        description: Team ID
+      team_abbr:
+        type: VARCHAR
+        description: Team abbreviation
+      player_id:
+        type: BIGINT
+        description: Player ID
+
+  schedule:
+    description: Game schedule. Contains planned and played games with dates and teams.
+    grain: "One row per (schedule_date, gamePk)"
+    key_columns: [gamePk]
+    columns:
+      gamePk:
+        type: BIGINT
+        description: Game ID (same as game_id in the games table)
+      schedule_date:
+        type: VARCHAR
+        description: Scheduled date
+      season:
+        type: VARCHAR
+        description: Season
+      home_team_id:
+        type: BIGINT
+        description: Home team ID
+      away_team_id:
+        type: BIGINT
+        description: Away team ID
+      gameType:
+        type: VARCHAR
+        description: Game type
+      start_time_utc:
+        type: VARCHAR
+        description: Start time in UTC
+
+  playoff_brackets:
+    description: Playoff bracket per season. One row per series (matchup) – shows which teams met, seeds, and winner.
+    grain: "One row per (season, series_letter)"
+    key_columns: [season, series_letter]
+    columns:
+      season:
+        type: VARCHAR
+        description: Season (e.g. 20232024)
+      series_letter:
+        type: VARCHAR
+        description: Series letter (A–O). Uniquely identifies the matchup within a season.
+      series_title:
+        type: VARCHAR
+        description: Round name (1st Round, 2nd Round, Conference Final, Stanley Cup Final)
+      series_abbrev:
+        type: VARCHAR
+        description: Round abbreviation (R1, R2, CF, SCF)
+      playoff_round:
+        type: BIGINT
+        description: Playoff round number (1=1st Round, 2=2nd Round, 3=Conference Final, 4=Stanley Cup Final)
+      top_seed_rank:
+        type: BIGINT
+        description: Seed of the higher-ranked team in the matchup
+      top_seed_rank_abbrev:
+        type: VARCHAR
+        description: Seed abbreviation (e.g. D1, WC1)
+      top_seed_wins:
+        type: BIGINT
+        description: Wins for the top seed in this series
+      top_seed_team_id:
+        type: BIGINT
+        description: NHL ID of the top seed team
+      top_seed_team_abbr:
+        type: VARCHAR
+        description: Abbreviation of the top seed team
+      bottom_seed_rank:
+        type: BIGINT
+        description: Seed of the lower-ranked team
+      bottom_seed_rank_abbrev:
+        type: VARCHAR
+        description: Seed abbreviation of the bottom seed
+      bottom_seed_wins:
+        type: BIGINT
+        description: Wins for the bottom seed in this series
+      bottom_seed_team_id:
+        type: BIGINT
+        description: NHL ID of the bottom seed team
+      bottom_seed_team_abbr:
+        type: VARCHAR
+        description: Abbreviation of the bottom seed team
+      winning_team_id:
+        type: BIGINT
+        description: NHL ID of the series winner
+      losing_team_id:
+        type: BIGINT
+        description: NHL ID of the series loser
 
   # ---------------------------------------------------------------------------
-  # Säsongsaggregerad (för baseline-jämförelse)
+  # Season-aggregated statistics
   # ---------------------------------------------------------------------------
 
   skater_stats:
-    description: Säsongsstatistik per skridskoåkare. Använd för baseline (poäng/säsong, poäng/match).
-    grain: "En rad per (season, playerId)"
+    description: Season-aggregated skater statistics 2010–2026. All players, all seasons. Baseline for breakout detection.
+    grain: "One row per (season, playerId)"
     key_columns: [season, playerId]
     insight_engine:
-      primary_for: [player_breakout]  # Jämför senaste N matcher mot season avg
+      primary_for: [player_breakout]
     columns:
       playerId:
         type: BIGINT
-        description: Spelar-ID
+        description: Player ID. Join against players.id or game_players.player_id.
       season:
         type: BIGINT
-        description: Säsong
+        description: Season (e.g. 20242025)
+      skaterFullName:
+        type: VARCHAR
+        description: Player full name
+      lastName:
+        type: VARCHAR
+        description: Last name
+      positionCode:
+        type: VARCHAR
+        description: Position (C, LW, RW, D)
+      teamAbbrevs:
+        type: VARCHAR
+        description: Team abbreviation(s). May contain multiple if traded during the season.
       gamesPlayed:
         type: BIGINT
-        description: Matcher spelade
+        description: Games played
       goals:
         type: BIGINT
-        description: Mål säsongen
+        description: Goals scored in the season
       assists:
         type: BIGINT
         description: Assists
       points:
         type: BIGINT
-        description: Poäng (baseline för breakout)
+        description: Points (goals + assists). Baseline for breakout comparisons.
       pointsPerGame:
         type: DOUBLE
-        description: Poäng per match (baseline)
+        description: Points per game (baseline)
+      plusMinus:
+        type: BIGINT
+        description: Plus/minus for the season
+      penaltyMinutes:
+        type: BIGINT
+        description: Penalty minutes
+      ppGoals:
+        type: BIGINT
+        description: Power play goals
+      ppPoints:
+        type: BIGINT
+        description: Power play points
+      shGoals:
+        type: BIGINT
+        description: Short-handed goals
+      evGoals:
+        type: BIGINT
+        description: Even-strength goals
+      gameWinningGoals:
+        type: BIGINT
+        description: Game-winning goals
+      shots:
+        type: BIGINT
+        description: Shots on goal
+      shootingPct:
+        type: DOUBLE
+        description: Shooting percentage (0–1)
+      timeOnIcePerGame:
+        type: DOUBLE
+        description: Average time on ice per game in seconds
+      faceoffWinPct:
+        type: DOUBLE
+        description: Faceoff win percentage (0–1)
 
   goalie_stats:
-    description: Säsongsstatistik per målvakt. Baseline för save_pct, GAA.
-    grain: "En rad per (season, playerId)"
+    description: Season-aggregated goalie statistics 2010–2026. Baseline for save percentage and GAA trends.
+    grain: "One row per (season, playerId)"
     key_columns: [season, playerId]
     insight_engine:
       primary_for: [goalie_save_pct_trend]
     columns:
       playerId:
         type: BIGINT
-        description: Spelar-ID
+        description: Player ID
       season:
         type: BIGINT
-        description: Säsong
+        description: Season
+      goalieFullName:
+        type: VARCHAR
+        description: Full name
+      lastName:
+        type: VARCHAR
+        description: Last name
+      teamAbbrevs:
+        type: VARCHAR
+        description: Team abbreviation(s)
+      gamesPlayed:
+        type: BIGINT
+        description: Games played
+      wins:
+        type: BIGINT
+        description: Wins
+      losses:
+        type: BIGINT
+        description: Losses
+      otLosses:
+        type: BIGINT
+        description: Overtime/shootout losses
       savePct:
         type: DOUBLE
-        description: Räddningsprocent säsongen (baseline)
+        description: Save percentage (0–1). Primary baseline column for goalie trends.
       goalsAgainstAverage:
         type: DOUBLE
-        description: GAA
+        description: Goals against average (GAA)
+      shutouts:
+        type: BIGINT
+        description: Shutouts
+      saves:
+        type: BIGINT
+        description: Total saves
+      shotsAgainst:
+        type: BIGINT
+        description: Total shots against
 
   team_stats:
-    description: Säsongsstatistik per lag. Baseline för lag-trender.
-    grain: "En rad per (season, teamId)"
+    description: Season-aggregated team statistics 2010–2026. Baseline for team trends (PP%, PK%, goals per game).
+    grain: "One row per (season, teamId)"
     key_columns: [season, teamId]
     insight_engine:
       primary_for: [team_points_streak]
     columns:
       teamId:
         type: BIGINT
-        description: Lag-ID
+        description: NHL team ID
+      teamFullName:
+        type: VARCHAR
+        description: Full team name
+      seasonId:
+        type: BIGINT
+        description: Season ID
       season:
-        type: BIGINT
-        description: Säsong
-      points:
-        type: BIGINT
-        description: Poäng säsongen
+        type: VARCHAR
+        description: Season (from file name)
       gamesPlayed:
         type: BIGINT
-        description: Matcher
+        description: Games played
+      wins:
+        type: BIGINT
+        description: Wins (regulation + OT)
+      losses:
+        type: BIGINT
+        description: Regulation losses
+      otLosses:
+        type: BIGINT
+        description: Overtime/shootout losses
+      points:
+        type: BIGINT
+        description: Standings points
       pointPct:
         type: DOUBLE
-        description: Poängprocent
+        description: Points percentage (points / (gamesPlayed * 2))
+      goalsFor:
+        type: BIGINT
+        description: Goals scored (season total)
+      goalsAgainst:
+        type: BIGINT
+        description: Goals allowed (season total)
+      goalsForPerGame:
+        type: DOUBLE
+        description: Goals scored per game
+      goalsAgainstPerGame:
+        type: DOUBLE
+        description: Goals allowed per game
+      powerPlayPct:
+        type: DOUBLE
+        description: Power play percentage (0–1)
+      penaltyKillPct:
+        type: DOUBLE
+        description: Penalty kill percentage (0–1)
+      shotsForPerGame:
+        type: DOUBLE
+        description: Shots on goal per game
+      shotsAgainstPerGame:
+        type: DOUBLE
+        description: Shots against per game
+      faceoffWinPct:
+        type: DOUBLE
+        description: Faceoff win percentage (0–1)
 
   standings:
-    description: Tabellställning per datum. Konferens, division, poäng.
-    grain: "En rad per (team, season, date)"
-    key_columns: [season, teamId]
+    description: Final standings per team per season 2010–2026. Shows W/L/OTL, points, and league rank.
+    grain: "One row per (season, teamAbbrev)"
+    key_columns: [season, teamAbbrev]
+    columns:
+      season:
+        type: VARCHAR
+        description: Season (e.g. 20232024)
+      teamAbbrev:
+        type: VARCHAR
+        description: Team abbreviation
+      teamName:
+        type: VARCHAR
+        description: Team name
+      teamCommonName:
+        type: VARCHAR
+        description: Short team name
+      wins:
+        type: DOUBLE
+        description: Regulation wins
+      losses:
+        type: DOUBLE
+        description: Regulation losses
+      otLosses:
+        type: DOUBLE
+        description: Overtime/shootout losses
+      points:
+        type: DOUBLE
+        description: Standings points
+      pointPctg:
+        type: DOUBLE
+        description: Points percentage
+      gamesPlayed:
+        type: DOUBLE
+        description: Games played
+      leagueSequence:
+        type: DOUBLE
+        description: League rank (1 = best in the league)
+      conferenceSequence:
+        type: DOUBLE
+        description: Conference rank
+      divisionSequence:
+        type: DOUBLE
+        description: Division rank
+      conferenceAbbrev:
+        type: VARCHAR
+        description: Conference abbreviation (E/W or historical abbreviation)
+      conferenceName:
+        type: VARCHAR
+        description: Conference name
+      divisionAbbrev:
+        type: VARCHAR
+        description: Division abbreviation
+      divisionName:
+        type: VARCHAR
+        description: Division name
+      goalFor:
+        type: DOUBLE
+        description: Goals scored in the season
+      goalAgainst:
+        type: DOUBLE
+        description: Goals allowed in the season
+      goalDifferential:
+        type: DOUBLE
+        description: Goal differential (goalFor - goalAgainst)
+      regulationWins:
+        type: DOUBLE
+        description: Wins in regulation (excludes OT/SO wins)
+      regulationPlusOtWins:
+        type: DOUBLE
+        description: Wins in regulation + overtime (excludes shootout wins)
+      homeWins:
+        type: DOUBLE
+        description: Home wins
+      roadWins:
+        type: DOUBLE
+        description: Road wins
+      streakCode:
+        type: VARCHAR
+        description: Streak type at end of season (W=win, L=loss, OT=overtime loss)
+      streakCount:
+        type: DOUBLE
+        description: Number of consecutive games in the current streak
 
   # ---------------------------------------------------------------------------
-  # EDGE (NHL avancerade mått – finns bara för NHL)
+  # EDGE (NHL advanced tracking)
   # ---------------------------------------------------------------------------
 
   edge_skaters:
-    description: NHL EDGE skater-mått (skotthastighet, åkhastighet, etc.). Endast NHL.
-    grain: "En rad per (season, category, player_id)"
+    description: NHL EDGE league leaders per category per season. One row per category = the league leader for that stat.
+    grain: "One row per (season, category, player_id)"
+    key_columns: [season, category, player_id]
+    columns:
+      season:
+        type: VARCHAR
+        description: Season
+      category:
+        type: VARCHAR
+        description: Stat category (e.g. hardestShot, fastestSkater, etc.)
+      player_id:
+        type: BIGINT
+        description: Player ID of the league leader
+      team_abbr:
+        type: VARCHAR
+        description: Player's team abbreviation
 
   edge_goalies:
-    description: NHL EDGE målvakts-mått. Endast NHL.
-    grain: "En rad per (season, category, player_id)"
+    description: NHL EDGE top-ranked goalies per category and season.
+    grain: "One row per (season, category, player_id)"
+    key_columns: [season, category, player_id]
+    columns:
+      season:
+        type: VARCHAR
+        description: Season
+      category:
+        type: VARCHAR
+        description: Stat category
+      player_id:
+        type: BIGINT
+        description: Player ID
 
   edge_teams:
-    description: NHL EDGE lag-mått. Endast NHL.
-    grain: "En rad per (season, category, team_id)"
+    description: NHL EDGE top-ranked teams per category and season.
+    grain: "One row per (season, category, team_id)"
+    key_columns: [season, category, team_id]
+    columns:
+      season:
+        type: VARCHAR
+        description: Season
+      category:
+        type: VARCHAR
+        description: Stat category
+      team_id:
+        type: BIGINT
+        description: Team ID
+      team_abbr:
+        type: VARCHAR
+        description: Team abbreviation
