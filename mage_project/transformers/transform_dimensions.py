@@ -222,6 +222,41 @@ def _glossary_to_rows(glossary_raw: Any) -> List[Dict[str, Any]]:
     return rows
 
 
+def _playoff_brackets_to_rows(playoff_payloads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Platta playoff bracket-filer till en rad per serie."""
+    rows: List[Dict[str, Any]] = []
+    for item in playoff_payloads or []:
+        payload = item.get("payload") or {}
+        season = payload.get("season") or ""
+        data = payload.get("data") or payload
+        series_list = data.get("series") or []
+        for s in series_list:
+            if not isinstance(s, dict):
+                continue
+            top = s.get("topSeedTeam") or {}
+            bot = s.get("bottomSeedTeam") or {}
+            rows.append({
+                "season":               season,
+                "series_letter":        s.get("seriesLetter"),
+                "series_title":         s.get("seriesTitle"),
+                "series_abbrev":        s.get("seriesAbbrev"),
+                "playoff_round":        s.get("playoffRound"),
+                "top_seed_rank":        s.get("topSeedRank"),
+                "top_seed_rank_abbrev": s.get("topSeedRankAbbrev"),
+                "top_seed_wins":        s.get("topSeedWins"),
+                "top_seed_team_id":     top.get("id"),
+                "top_seed_team_abbr":   top.get("abbrev"),
+                "bottom_seed_rank":     s.get("bottomSeedRank"),
+                "bottom_seed_rank_abbrev": s.get("bottomSeedRankAbbrev"),
+                "bottom_seed_wins":     s.get("bottomSeedWins"),
+                "bottom_seed_team_id":  bot.get("id"),
+                "bottom_seed_team_abbr": bot.get("abbrev"),
+                "winning_team_id":      s.get("winningTeamId"),
+                "losing_team_id":       s.get("losingTeamId"),
+            })
+    return rows
+
+
 def _draft_to_rows(draft_raw: Any) -> List[Dict[str, Any]]:
     """Platta draft_year_and_rounds till rader."""
     if not draft_raw:
@@ -252,6 +287,7 @@ def transform_dimensions(payload: Dict[str, Any], *args, **kwargs):
     helpers_payloads = payload.get("helpers_payloads") or []
     glossary_raw = payload.get("glossary")
     draft_raw = payload.get("draft")
+    playoff_payloads = payload.get("playoff_payloads") or []
 
     teams_list = extract_list(teams_raw, ["teams", "data", "items"])
     if not teams_list and isinstance(teams_raw, list):
@@ -350,6 +386,10 @@ def transform_dimensions(payload: Dict[str, Any], *args, **kwargs):
     glossary_df = pd.DataFrame(glossary_rows) if glossary_rows else pd.DataFrame()
     draft_rows = _draft_to_rows(draft_raw)
     draft_df = pd.DataFrame(draft_rows) if draft_rows else pd.DataFrame()
+    playoff_rows = _playoff_brackets_to_rows(playoff_payloads)
+    playoff_df = pd.DataFrame(playoff_rows) if playoff_rows else pd.DataFrame()
+    if not playoff_df.empty and "season" in playoff_df.columns and "series_letter" in playoff_df.columns:
+        playoff_df = playoff_df.drop_duplicates(subset=["season", "series_letter"], keep="first")
 
     # Ta bort dubletter (samma match i flera schedule-filer, samma game_id i flera helpers, samma roster i flera filer)
     if not schedule_df.empty and "gamePk" in schedule_df.columns:
@@ -369,4 +409,5 @@ def transform_dimensions(payload: Dict[str, Any], *args, **kwargs):
         "game_ids": game_ids_df,
         "glossary": glossary_df,
         "draft": draft_df,
+        "playoff_brackets": playoff_df,
     }

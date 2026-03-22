@@ -22,6 +22,7 @@ DATASETS = [
     "game_ids",
     "glossary",
     "draft",
+    "playoff_brackets",
     "standings",
     "skater_stats",
     "goalie_stats",

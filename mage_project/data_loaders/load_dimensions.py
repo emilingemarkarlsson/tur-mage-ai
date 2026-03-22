@@ -74,6 +74,15 @@ def load_dimensions(*args, **kwargs):
     except Exception:
         pass
 
+    # Playoff brackets (nhl-data/playoffs/YYYY_bracket.json)
+    playoff_keys = [k for k in list_keys(client, bucket, "nhl-data/playoffs/") if k.endswith("_bracket.json")]
+    playoff_payloads = []
+    for key in sorted(playoff_keys):
+        try:
+            playoff_payloads.append({"key": key, "payload": read_json(client, bucket, key)})
+        except Exception:
+            pass
+
     return {
         "teams": teams,
         "players": players,
@@ -86,4 +95,5 @@ def load_dimensions(*args, **kwargs):
         "helpers_payloads": helpers_payloads,
         "glossary": glossary,
         "draft": draft,
+        "playoff_payloads": playoff_payloads,
     }

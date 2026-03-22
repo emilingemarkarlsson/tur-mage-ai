@@ -102,3 +102,10 @@ def export_dimensions_parquet(data, *args, **kwargs):
     _write_df(data.get("game_ids"), os.path.join(silver, "game_ids"), s3_prefix=s3_prefix, s3_bucket=s3_bucket)
     _write_df(data.get("glossary"), os.path.join(silver, "glossary"), s3_prefix=s3_prefix, s3_bucket=s3_bucket)
     _write_df(data.get("draft"), os.path.join(silver, "draft"), s3_prefix=s3_prefix, s3_bucket=s3_bucket)
+    _write_df(
+        data.get("playoff_brackets"),
+        os.path.join(silver, "playoff_brackets"),
+        partition_col="season",
+        s3_prefix=s3_prefix,
+        s3_bucket=s3_bucket,
+    )
