@@ -2,9 +2,10 @@ name: NHL Daily Pipeline
 
 on:
   schedule:
-    # 07:00 UTC (09:00 CET) – 1h efter tur-nhl-api:s 06:00 UTC-körning.
-    # NHL-matcher avslutas senast ~03:00 UTC; data är uppladdad till Hetzner S3 innan 07:00.
-    - cron: "0 7 * * *"
+    # Måndag 07:00 UTC: alla tre pipelines (dimensions + seasonal + games).
+    - cron: "0 7 * * 1"
+    # Tisdag–Söndag 07:00 UTC: bara games_pipeline (dimensions/seasonal ändras sällan).
+    - cron: "0 7 * * 0,2-6"
   workflow_dispatch:
     # Manuell körning från GitHub UI – t.ex. för att ladda ett specifikt år efter missad körning.
     inputs:
@@ -61,6 +62,7 @@ jobs:
           echo "[state] games_year satt till ${{ github.event.inputs.games_year }}"
 
       - name: Run dimensions_pipeline
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 7 * * 1'
         env:
           S3_SOURCE: hetzner
           HETZNER_BUCKET: ${{ secrets.HETZNER_BUCKET }}
@@ -84,6 +86,7 @@ jobs:
         run: mage run mage_project dimensions_pipeline
 
       - name: Run seasonal_stats_pipeline
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 7 * * 1'
         env:
           S3_SOURCE: hetzner
           HETZNER_BUCKET: ${{ secrets.HETZNER_BUCKET }}
