@@ -13,6 +13,12 @@ if [ -z "$YEAR" ]; then
   echo "Kör sedan games_pipeline i Mage UI. För nästa år: ./scripts/run_games_year.sh 2011"
   exit 1
 fi
+# games_year.txt har företräde över .env – uppdatera båda
+STATE_FILE="${ROOT}/mage_project/state/games_year.txt"
+mkdir -p "$(dirname "$STATE_FILE")"
+echo "$YEAR" > "$STATE_FILE"
+echo "games_year.txt: $YEAR"
+
 if [ -f "$ENV_FILE" ]; then
   if grep -q '^GAMES_YEAR=' "$ENV_FILE" 2>/dev/null; then
     sed -i.bak "s/^GAMES_YEAR=.*/GAMES_YEAR=$YEAR/" "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
@@ -20,6 +26,16 @@ if [ -f "$ENV_FILE" ]; then
     echo "GAMES_YEAR=$YEAR" >> "$ENV_FILE"
   fi
   echo "GAMES_YEAR=$YEAR satt i .env"
+
+  # Varna om GAMES_START_DATE skulle blockera detta år
+  START_DATE=$(grep -E '^GAMES_START_DATE=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d ' ')
+  START_YEAR="${START_DATE:0:4}"
+  if [ -n "$START_YEAR" ] && [ "$START_YEAR" -gt "$YEAR" ] 2>/dev/null; then
+    echo ""
+    echo "VARNING: GAMES_START_DATE=$START_DATE – datum i $YEAR filtreras bort."
+    echo "  Sätt GAMES_START_DATE=2010-01-01 (eller tidigare) i .env för att inkludera $YEAR."
+  fi
+
   echo ""
   echo "Nästa steg:"
   echo "  1. docker compose restart mage"

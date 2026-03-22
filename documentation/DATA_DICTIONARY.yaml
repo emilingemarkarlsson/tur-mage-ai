@@ -1,0 +1,445 @@
+# Data Dictionary – NHL Gold (MotherDuck / DuckDB)
+#
+# Beskriver varje tabell och kolumn för att:
+# 1. Dokumentera vilken data som finns
+# 2. Ge Insight Engine kontext för detectors (vilka kolumner använda för vilket mönster)
+# 3. Möjliggöra automatisk formulering av insikter (LLM eller template)
+#
+# Uppdatera vid schemaändringar. Kör scripts/analyze_motherduck_data.py för att verifiera
+# att kolumner finns i MotherDuck.
+
+version: "1.0"
+league: nhl
+updated: "2026-02-24"
+
+tables:
+  # ---------------------------------------------------------------------------
+  # Game-level (Insight Engine core)
+  # ---------------------------------------------------------------------------
+
+  games:
+    description: En rad per match. Innehåller hemmalag, bortalag, mål, status, lagnivå-statistik (SOG, PP, hits, etc.).
+    grain: "En rad per game_id"
+    key_columns: [game_id]
+    insight_engine:
+      primary_for: []  # Använd team_game_stats för lag-trender istället
+      join_keys: [game_id, game_date]
+
+    columns:
+      game_id:
+        type: BIGINT
+        description: Unikt match-ID (NHL API gamePk)
+      game_date:
+        type: DATE
+        description: Datum för matchen. Använd för sortering och lookback.
+      season:
+        type: BIGINT
+        description: Säsong (t.ex. 20242025). Format YYYY(YYYY+1).
+      home_team_abbr:
+        type: VARCHAR
+        description: Hemmalag förkortning (t.ex. TOR, BOS)
+      away_team_abbr:
+        type: VARCHAR
+        description: Bortalag förkortning
+      home_team_id:
+        type: BIGINT
+        description: Hemmalag NHL ID
+      away_team_id:
+        type: BIGINT
+        description: Bortalag NHL ID
+      home_score:
+        type: BIGINT
+        description: Mål hemmalag
+      away_score:
+        type: BIGINT
+        description: Mål bortalag
+      home_points:
+        type: BIGINT
+        description: NHL-poäng hemmalag (2 vinst, 1 OT/SO-förlust, 0 förlust)
+      away_points:
+        type: BIGINT
+        description: NHL-poäng bortalag
+      status:
+        type: VARCHAR
+        description: Matchens status (t.ex. FINAL, LIVE)
+      home_sog:
+        type: BIGINT
+        description: Skott på mål hemmalag
+      away_sog:
+        type: BIGINT
+        description: Skott på mål bortalag
+      home_pp_goals:
+        type: DOUBLE
+        description: Powerplay-mål hemmalag
+      away_pp_goals:
+        type: DOUBLE
+        description: Powerplay-mål bortalag
+      home_hits:
+        type: BIGINT
+        description: Tacklingar hemmalag
+      away_hits:
+        type: BIGINT
+        description: Tacklingar bortalag
+      home_blocked:
+        type: BIGINT
+        description: Blockade skott hemmalag
+      away_blocked:
+        type: BIGINT
+        description: Blockade skott bortalag
+      venue:
+        type: VARCHAR
+        description: Arenanamn
+      venue_location:
+        type: VARCHAR
+        description: Stad/plats för arenan
+      start_time_utc:
+        type: VARCHAR
+        description: Starttid UTC
+
+  team_game_stats:
+    description: En rad per lag per match. Unpivot av games – enklare för lag-trender (poäng per match, mål per match).
+    grain: "En rad per (game_id, team_abbr)"
+    key_columns: [game_id, team_abbr]
+    insight_engine:
+      primary_for: [team_points_streak, team_goals_trend, team_sog_trend]
+      join_keys: [game_id, game_date]
+
+    columns:
+      game_id:
+        type: BIGINT
+        description: Match-ID
+      game_date:
+        type: DATE
+        description: Datum. Använd ORDER BY game_date för trendanalys.
+      season:
+        type: BIGINT
+        description: Säsong
+      team_abbr:
+        type: VARCHAR
+        description: Lagförkortning (t.ex. TOR)
+      opponent_abbr:
+        type: VARCHAR
+        description: Motståndarlag
+      is_home:
+        type: BOOLEAN
+        description: True = hemmamatch, False = bortamatch. För hemma/borta-splits.
+      goals_for:
+        type: BIGINT
+        description: Mål gjorda av laget denna match
+      goals_against:
+        type: BIGINT
+        description: Mål insläppta
+      team_points:
+        type: BIGINT
+        description: Poäng denna match (2 vinst, 1 OT-förlust, 0 förlust). Huvudsaklig för points-per-game-trender.
+      sog:
+        type: BIGINT
+        description: Skott på mål
+      pp_goals:
+        type: DOUBLE
+        description: Powerplay-mål
+      hits:
+        type: BIGINT
+        description: Tacklingar
+      blocked_shots:
+        type: BIGINT
+        description: Blockade skott
+      venue:
+        type: VARCHAR
+        description: Arena (för arena-trender)
+
+  player_game_stats:
+    description: En rad per spelare per match, med spelarnamn. Använd för spelar-trender (poäng, mål, assist, TOI).
+    grain: "En rad per (game_id, player_id)"
+    key_columns: [game_id, player_id]
+    insight_engine:
+      primary_for: [player_breakout, player_points_trend, player_goals_streak]
+      join_keys: [game_id, game_date]
+
+    columns:
+      game_id:
+        type: BIGINT
+        description: Match-ID
+      game_date:
+        type: DATE
+        description: Datum
+      player_id:
+        type: BIGINT
+        description: Spelar-ID (NHL)
+      player_first_name:
+        type: VARCHAR
+        description: Förnamn (för human-readable output)
+      player_last_name:
+        type: VARCHAR
+        description: Efternamn
+      team_abbr:
+        type: VARCHAR
+        description: Lag
+      is_home:
+        type: BOOLEAN
+        description: Hemma eller borta
+      position:
+        type: VARCHAR
+        description: F, D, C, LW, RW, G. Filtrera position='G' för målvakter.
+      goals:
+        type: DOUBLE
+        description: Mål denna match
+      assists:
+        type: DOUBLE
+        description: Assists
+      points:
+        type: DOUBLE
+        description: Poäng (mål + assist). Huvudsaklig för breakout/trend-detection.
+      plus_minus:
+        type: DOUBLE
+        description: Plus/minus
+      shots:
+        type: DOUBLE
+        description: Skott på mål (SOG)
+      toi_seconds:
+        type: BIGINT
+        description: Speltid i sekunder
+      hits:
+        type: DOUBLE
+        description: Tacklingar
+      blocked_shots:
+        type: DOUBLE
+        description: Blockade skott
+      power_play_goals:
+        type: DOUBLE
+        description: Powerplay-mål
+      short_handed_goals:
+        type: VARCHAR
+        description: Uppspelade mål
+      faceoff_win_pct:
+        type: DOUBLE
+        description: Vunna tekningar (0–1 eller procent)
+      saves:
+        type: DOUBLE
+        description: Räddningar (målvakter)
+      shots_against:
+        type: DOUBLE
+        description: Skott mot (målvakter)
+      save_pct:
+        type: DOUBLE
+        description: Räddningsprocent (0–1). Huvudsaklig för goalie_trend-detection.
+      goals_against:
+        type: DOUBLE
+        description: Insläppta mål (målvakter)
+      even_strength_goals_against:
+        type: DOUBLE
+        description: Insläppta jämnstyrka (målvakter)
+      power_play_goals_against:
+        type: DOUBLE
+        description: Insläppta powerplay (målvakter)
+      shorthanded_goals_against:
+        type: DOUBLE
+        description: Insläppta short-handed (målvakter)
+
+  game_players:
+    description: Samma som player_game_stats men utan spelarnamn (join till players). Raw spelarstatistik per match.
+    grain: "En rad per (game_id, player_id)"
+    key_columns: [game_id, player_id]
+    insight_engine:
+      primary_for: []
+      join_keys: [game_id, game_date]
+    columns: {}  # Samma kolumner som player_game_stats (utom player_first_name, player_last_name)
+
+  game_events:
+    description: Play-by-play händelser från playByPlay (mål, skott, straff, faceoff, hit, etc.). Finns bara om källfilen har playByPlay.
+    grain: "En rad per (game_id, event_id)"
+    key_columns: [game_id, event_id]
+    insight_engine:
+      primary_for: []  # Framtida: shot_quality, event_timeline
+    columns:
+      game_id:
+        type: BIGINT
+        description: Match-ID
+      game_date:
+        type: DATE
+        description: Datum
+      event_id:
+        type: BIGINT
+        description: Unikt ID per händelse
+      period:
+        type: BIGINT
+        description: Period (1, 2, 3, 4 för OT)
+      period_type:
+        type: VARCHAR
+        description: REGULAR, OVERTIME, SHOOTOUT
+      time_remaining:
+        type: VARCHAR
+        description: T.ex. "15:30"
+      event_type:
+        type: VARCHAR
+        description: Goal, Shot, Penalty, Faceoff, Hit, Block, etc.
+      team_abbr:
+        type: VARCHAR
+        description: Lag
+      player_id:
+        type: BIGINT
+        description: Huvudspelare (t.ex. målskytt)
+      secondary_player_id:
+        type: BIGINT
+        description: Assisterande (mål)
+      description:
+        type: VARCHAR
+        description: Händelsebeskrivning
+
+  game_stories:
+    description: Game story (rubrik, brödtext) från gameStory. Finns bara om källfilen har gameStory. För texthantering/LLM.
+    grain: "En rad per game_id"
+    key_columns: [game_id]
+    columns:
+      game_id:
+        type: BIGINT
+        description: Match-ID
+      game_date:
+        type: DATE
+        description: Datum
+      headline:
+        type: VARCHAR
+        description: Rubrik
+      body:
+        type: VARCHAR
+        description: Brödtext
+
+  # ---------------------------------------------------------------------------
+  # Dimension / referens
+  # ---------------------------------------------------------------------------
+
+  teams:
+    description: En rad per lag. Conference, division, namn.
+    grain: "En rad per team"
+    key_columns: [abbr]
+    columns:
+      id:
+        type: BIGINT
+        description: NHL team ID
+      abbr:
+        type: VARCHAR
+        description: Förkortning (TOR, BOS, …)
+      name:
+        type: VARCHAR
+        description: Fullt namn
+      conference:
+        type: VARCHAR
+        description: Conference
+      division:
+        type: VARCHAR
+        description: Division
+
+  players:
+    description: En rad per spelare. Namn, position, födelsedatum.
+    grain: "En rad per player"
+    key_columns: [id]
+    columns:
+      id:
+        type: BIGINT
+        description: NHL player ID
+      firstName:
+        type: VARCHAR
+        description: Förnamn
+      lastName:
+        type: VARCHAR
+        description: Efternamn
+      positionCode:
+        type: VARCHAR
+        description: Position (F, D, G, …)
+
+  # ---------------------------------------------------------------------------
+  # Säsongsaggregerad (för baseline-jämförelse)
+  # ---------------------------------------------------------------------------
+
+  skater_stats:
+    description: Säsongsstatistik per skridskoåkare. Använd för baseline (poäng/säsong, poäng/match).
+    grain: "En rad per (season, playerId)"
+    key_columns: [season, playerId]
+    insight_engine:
+      primary_for: [player_breakout]  # Jämför senaste N matcher mot season avg
+    columns:
+      playerId:
+        type: BIGINT
+        description: Spelar-ID
+      season:
+        type: BIGINT
+        description: Säsong
+      gamesPlayed:
+        type: BIGINT
+        description: Matcher spelade
+      goals:
+        type: BIGINT
+        description: Mål säsongen
+      assists:
+        type: BIGINT
+        description: Assists
+      points:
+        type: BIGINT
+        description: Poäng (baseline för breakout)
+      pointsPerGame:
+        type: DOUBLE
+        description: Poäng per match (baseline)
+
+  goalie_stats:
+    description: Säsongsstatistik per målvakt. Baseline för save_pct, GAA.
+    grain: "En rad per (season, playerId)"
+    key_columns: [season, playerId]
+    insight_engine:
+      primary_for: [goalie_save_pct_trend]
+    columns:
+      playerId:
+        type: BIGINT
+        description: Spelar-ID
+      season:
+        type: BIGINT
+        description: Säsong
+      savePct:
+        type: DOUBLE
+        description: Räddningsprocent säsongen (baseline)
+      goalsAgainstAverage:
+        type: DOUBLE
+        description: GAA
+
+  team_stats:
+    description: Säsongsstatistik per lag. Baseline för lag-trender.
+    grain: "En rad per (season, teamId)"
+    key_columns: [season, teamId]
+    insight_engine:
+      primary_for: [team_points_streak]
+    columns:
+      teamId:
+        type: BIGINT
+        description: Lag-ID
+      season:
+        type: BIGINT
+        description: Säsong
+      points:
+        type: BIGINT
+        description: Poäng säsongen
+      gamesPlayed:
+        type: BIGINT
+        description: Matcher
+      pointPct:
+        type: DOUBLE
+        description: Poängprocent
+
+  standings:
+    description: Tabellställning per datum. Konferens, division, poäng.
+    grain: "En rad per (team, season, date)"
+    key_columns: [season, teamId]
+
+  # ---------------------------------------------------------------------------
+  # EDGE (NHL avancerade mått – finns bara för NHL)
+  # ---------------------------------------------------------------------------
+
+  edge_skaters:
+    description: NHL EDGE skater-mått (skotthastighet, åkhastighet, etc.). Endast NHL.
+    grain: "En rad per (season, category, player_id)"
+
+  edge_goalies:
+    description: NHL EDGE målvakts-mått. Endast NHL.
+    grain: "En rad per (season, category, player_id)"
+
+  edge_teams:
+    description: NHL EDGE lag-mått. Endast NHL.
+    grain: "En rad per (season, category, team_id)"

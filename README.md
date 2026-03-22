@@ -129,7 +129,9 @@ Du kan välja källa med `S3_SOURCE`:
 
 Se `.env.example` för alla variabler.
 
-**Validera Silver och Gold:** Kör `python scripts/validate_silver_gold.py` (från projektroten eller i containern). Det visar vilka datamängder som har Parquet-filer och (om DuckDB finns lokalt) radantal per vy. Nya kolumner i Silver (t.ex. `conference_abbr`, `start_time_utc`, edge `category`/`value_*`) hamnar automatiskt i Gold-vyerna eftersom vyer bygger på `SELECT *` från Parquet.
+**Validera Silver och Gold:** Kör `python scripts/validate_silver_gold.py`
+
+**Analysera och dokumentera MotherDuck-data:** Kör `python scripts/analyze_motherduck_data.py` (kräver `MOTHERDUCK_TOKEN`). Genererar `documentation/MOTHERDUCK_DATA_COVERAGE.md` med tabeller, radantal, datumspann, säsonger och kolumntäckning. (från projektroten eller i containern). Det visar vilka datamängder som har Parquet-filer och (om DuckDB finns lokalt) radantal per vy. Nya kolumner i Silver (t.ex. `conference_abbr`, `start_time_utc`, edge `category`/`value_*`) hamnar automatiskt i Gold-vyerna eftersom vyer bygger på `SELECT *` från Parquet.
 
 **Kontrollera att all data i Hetzner kommer med:** Kör `python scripts/list_s3_bucket.py` (i containern: `docker exec tur-mage-ai-mage-1 bash -c "cd /home/src && python scripts/list_s3_bucket.py"`) och jämför med [documentation/DATA_SOURCES_S3.md](documentation/DATA_SOURCES_S3.md) – där står vilka S3-mappar pipelinen läser och vilka som (ännu) inte laddas. **Bronze (~100 GB) vs Silver:** S3 innehåller samma matchfiler många gånger (by_date, by_team, by_player); pipelinen läser bara by_date och sparar utplockade fält i Parquet, så Silver blir mycket mindre i GB men med samma täckning. Kör `python scripts/compare_bronze_silver_volume.py` för att se antal matcher i S3 vs Silver och förklaring till storleken.
 

@@ -39,6 +39,10 @@ services:
     ports:
       - "6789:6789"
       - "8501:8501"
+    deploy:
+      resources:
+        limits:
+          memory: 6G
     volumes:
       - .:/home/src
     depends_on:

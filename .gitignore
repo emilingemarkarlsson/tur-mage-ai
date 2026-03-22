@@ -14,3 +14,4 @@ mage_project/.ssh_tunnel/
 mage_project/metadata.yaml
 mage_project/data_lake/
 mage_project/state/
+insight_engine_output/

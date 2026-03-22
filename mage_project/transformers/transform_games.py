@@ -214,6 +214,80 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
     }
 
 
+def _extract_game_events(payload: Dict[str, Any], game_id: int) -> List[Dict[str, Any]]:
+    """Extrahera händelser från playByPlay. Returnerar [] om playByPlay saknas (defensivt)."""
+    play_by_play = payload.get("playByPlay")
+    if not play_by_play or not isinstance(play_by_play, dict):
+        return []
+    plays = (
+        play_by_play.get("plays")
+        or play_by_play.get("gamePlays")
+        or play_by_play.get("allPlays")
+        or (payload.get("liveData") or {}).get("plays", {}).get("allPlays")
+        or []
+    )
+    if not isinstance(plays, list):
+        return []
+
+    events: List[Dict[str, Any]] = []
+    for i, p in enumerate(plays):
+        if not isinstance(p, dict):
+            continue
+        about = p.get("about") or {}
+        result = p.get("result") or {}
+        team = p.get("team") or {}
+        period = to_int(about.get("period")) or to_int(p.get("period"))
+        period_type = about.get("periodType") or p.get("periodType") or ""
+        time_remaining = about.get("periodTime") or about.get("timeRemaining") or p.get("periodTime") or ""
+        event_type = result.get("eventTypeId") or result.get("eventType") or p.get("type") or p.get("eventTypeId")
+        team_abbr = team.get("triCode") or team.get("abbreviation") or team.get("abbrev")
+        description = result.get("description") or p.get("description") or ""
+
+        player_id = None
+        secondary_player_id = None
+        for pl in (p.get("players") or [])[:3]:
+            if not isinstance(pl, dict):
+                continue
+            player_obj = pl.get("player") or {}
+            pid = to_int(player_obj.get("id") if isinstance(player_obj, dict) else pl.get("playerId"))
+            if not pid:
+                continue
+            if player_id is None:
+                player_id = pid
+            elif secondary_player_id is None:
+                secondary_player_id = pid
+
+        events.append({
+            "game_id": game_id,
+            "event_id": to_int(about.get("eventId")) or i,
+            "period": period,
+            "period_type": period_type,
+            "time_remaining": time_remaining,
+            "event_type": str(event_type) if event_type else "",
+            "team_abbr": team_abbr,
+            "player_id": player_id,
+            "secondary_player_id": secondary_player_id,
+            "description": description[:500] if description else "",
+        })
+    return events
+
+
+def _extract_game_story(payload: Dict[str, Any], game_id: int) -> Dict[str, Any] | None:
+    """Extrahera gameStory. Returnerar None om gameStory saknas (defensivt)."""
+    game_story = payload.get("gameStory")
+    if not game_story or not isinstance(game_story, dict):
+        return None
+    headline = game_story.get("headline") or game_story.get("title") or ""
+    body = game_story.get("body") or game_story.get("article") or game_story.get("text") or ""
+    if not headline and not body:
+        return None
+    return {
+        "game_id": game_id,
+        "headline": headline[:1000] if headline else "",
+        "body": body[:50000] if body else "",  # Begränsa storlek
+    }
+
+
 def _extract_players(payload: Dict[str, Any], game_id: int, game_date: str) -> List[Dict[str, Any]]:
     players_rows: List[Dict[str, Any]] = []
     boxscore = payload.get("boxscore", {}) or {}
@@ -344,6 +418,8 @@ def transform_games(payload: Dict[str, Any], *args, **kwargs):
 
     game_rows: List[Dict[str, Any]] = []
     player_rows: List[Dict[str, Any]] = []
+    event_rows: List[Dict[str, Any]] = []
+    story_rows: List[Dict[str, Any]] = []
 
     for item in games_raw:
         game_date = item.get("game_date")
@@ -354,19 +430,39 @@ def transform_games(payload: Dict[str, Any], *args, **kwargs):
         game_id = game_row.get("game_id")
         if game_id:
             player_rows.extend(_extract_players(data, game_id, game_date))
+            # playByPlay och gameStory – defensivt (fil utan dessa ger tom lista/None)
+            events = _extract_game_events(data, game_id)
+            for e in events:
+                e["game_date"] = parse_date(game_date)
+            event_rows.extend(events)
+            story = _extract_game_story(data, game_id)
+            if story:
+                story["game_date"] = parse_date(game_date)
+                story_rows.append(story)
 
     games_df = pd.DataFrame(game_rows)
     players_df = pd.DataFrame(player_rows)
+    game_events_df = pd.DataFrame(event_rows)
+    game_stories_df = pd.DataFrame(story_rows)
 
-    # Ta bort dubletter (samma match eller samma spelare i samma match flera gånger)
+    # Ta bort dubletter
     if not games_df.empty and "game_id" in games_df.columns:
         games_df = games_df.drop_duplicates(subset=["game_id"], keep="first")
     if not players_df.empty and "game_id" in players_df.columns and "player_id" in players_df.columns:
         players_df = players_df.drop_duplicates(subset=["game_id", "player_id"], keep="first")
+    if not game_events_df.empty and "game_id" in game_events_df.columns and "event_id" in game_events_df.columns:
+        game_events_df = game_events_df.drop_duplicates(subset=["game_id", "event_id"], keep="first")
+    if not game_stories_df.empty and "game_id" in game_stories_df.columns:
+        game_stories_df = game_stories_df.drop_duplicates(subset=["game_id"], keep="first")
 
-    _debug_log("Transform exit", {"games_rows": len(games_df), "players_rows": len(players_df), "games_empty": games_df.empty, "players_empty": players_df.empty}, "B")
+    _debug_log("Transform exit", {
+        "games_rows": len(games_df), "players_rows": len(players_df),
+        "events_rows": len(game_events_df), "stories_rows": len(game_stories_df),
+    }, "B")
     return {
         "games": games_df,
         "game_players": players_df,
-        "newest_date": payload.get("last_date"),  # för state-skrivning i export (efter lyckad skriv)
+        "game_events": game_events_df,
+        "game_stories": game_stories_df,
+        "newest_date": payload.get("last_date"),
     }

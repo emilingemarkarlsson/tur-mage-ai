@@ -122,9 +122,15 @@ def export_games_parquet(data, *args, **kwargs):
 
     games_df = data.get("games") if data else None
     players_df = data.get("game_players") if data else None
+    game_events_df = data.get("game_events") if data else None
+    game_stories_df = data.get("game_stories") if data else None
     games_empty = games_df is None or (hasattr(games_df, "empty") and games_df.empty)
     players_empty = players_df is None or (hasattr(players_df, "empty") and players_df.empty)
-    _debug_log("Export entry", {"silver_base": silver, "games_empty": games_empty, "players_empty": players_empty, "games_len": len(games_df) if hasattr(games_df, "__len__") else None, "players_len": len(players_df) if hasattr(players_df, "__len__") else None}, "C")
+    _debug_log("Export entry", {
+        "silver_base": silver, "games_empty": games_empty, "players_empty": players_empty,
+        "events_empty": game_events_df is None or (hasattr(game_events_df, "empty") and game_events_df.empty),
+        "stories_empty": game_stories_df is None or (hasattr(game_stories_df, "empty") and game_stories_df.empty),
+    }, "C")
 
     _write_df(
         games_df,
@@ -140,6 +146,21 @@ def export_games_parquet(data, *args, **kwargs):
         s3_prefix=s3_prefix,
         s3_bucket=s3_bucket,
         columns=GAME_PLAYERS_COLUMNS,
+    )
+    # playByPlay → game_events, gameStory → game_stories (valfritt, filer utan dessa ger tom export)
+    _write_df(
+        game_events_df,
+        os.path.join(silver, "game_events"),
+        partition_col="game_date",
+        s3_prefix=s3_prefix,
+        s3_bucket=s3_bucket,
+    )
+    _write_df(
+        game_stories_df,
+        os.path.join(silver, "game_stories"),
+        partition_col="game_date",
+        s3_prefix=s3_prefix,
+        s3_bucket=s3_bucket,
     )
     # Uppdatera state först när export lyckats – så vid Mage-retry (t.ex. loader timeout) används inte redan sparad state och nästa körning får inte tom data.
     newest_date = (data or {}).get("newest_date")

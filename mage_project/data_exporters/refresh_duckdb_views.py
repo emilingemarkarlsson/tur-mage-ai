@@ -31,6 +31,8 @@ DATASETS = [
     "edge_teams",
     "games",
     "game_players",
+    "game_events",   # playByPlay – om filer har full data
+    "game_stories", # gameStory – om filer har full data
 ]
 
 
@@ -71,12 +73,61 @@ def _sync_to_motherduck(db_path: str) -> None:
         tables = [r[0] for r in rows]
     except Exception:
         tables = DATASETS + ["player_game_stats", "team_game_stats"]
+    # Game tables are upserted (INSERT new rows only) so that historical data in
+    # MotherDuck is preserved when the pipeline runs incrementally (e.g. GitHub Actions
+    # where only the latest Silver is local). Dimension/stats tables are always replaced
+    # since they are small and always rebuilt from all S3 source files.
+    UPSERT_KEYS: dict = {
+        "games":                   ("game_id",),
+        "game_players":            ("game_id", "player_id"),
+        "game_events":             ("game_id", "event_id"),
+        "game_stories":            ("game_id",),
+        "player_game_stats":       ("game_id", "player_id"),
+        "team_game_stats":         ("game_id", "team_abbr"),
+        "team_game_stats_extended": ("game_id", "team_abbr"),
+    }
+
+    def _md_table_exists(conn, catalog: str, name: str) -> bool:
+        try:
+            rows = conn.execute(
+                f"SELECT 1 FROM \"{catalog}\".information_schema.tables "
+                f"WHERE table_schema = 'main' AND table_name = '{name}' LIMIT 1"
+            ).fetchall()
+            return len(rows) > 0
+        except Exception:
+            return False
+
     catalog = md_db
     ok, fail = 0, 0
     try:
         for name in tables:
             try:
-                sync_conn.execute(f'CREATE OR REPLACE TABLE "{catalog}".main."{name}" AS SELECT * FROM local.main."{name}"')
+                if name in UPSERT_KEYS:
+                    keys = UPSERT_KEYS[name]
+                    if not _md_table_exists(sync_conn, catalog, name):
+                        # First time: create table from local data
+                        sync_conn.execute(
+                            f'CREATE OR REPLACE TABLE "{catalog}".main."{name}" '
+                            f'AS SELECT * FROM local.main."{name}"'
+                        )
+                    else:
+                        # Subsequent runs: insert only rows not already in MotherDuck
+                        join_cond = " AND ".join(
+                            f'md."{k}" = src."{k}"' for k in keys
+                        )
+                        sync_conn.execute(f"""
+                            INSERT INTO "{catalog}".main."{name}"
+                            SELECT src.* FROM local.main."{name}" src
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM "{catalog}".main."{name}" md
+                                WHERE {join_cond}
+                            )
+                        """)
+                else:
+                    sync_conn.execute(
+                        f'CREATE OR REPLACE TABLE "{catalog}".main."{name}" '
+                        f'AS SELECT * FROM local.main."{name}"'
+                    )
                 ok += 1
             except Exception as e:
                 print(f"[sync_to_motherduck] {name}: {e}")
@@ -176,6 +227,22 @@ def refresh_duckdb_views(*args, **kwargs):
             conn.execute(_team_game_stats_sql_minimal)
         except Exception:
             pass  # games missing or schema too old
+
+    # Team stats per game with conference and division (join team_game_stats + teams).
+    # teams.abbr is the column from source (all_teams.json uses "abbr", not "abbrev").
+    try:
+        conn.execute("""
+            CREATE OR REPLACE VIEW team_game_stats_extended AS
+            SELECT tgs.*,
+                   t.conference_abbr,
+                   t.conference_name,
+                   t.division_abbr,
+                   t.division_name
+            FROM team_game_stats tgs
+            LEFT JOIN teams t ON t.abbr = tgs.team_abbr
+        """)
+    except Exception:
+        pass  # team_game_stats or teams missing
 
     # Synka till MotherDuck (måste ske efter conn.close så filen inte är låst)
     conn.close()

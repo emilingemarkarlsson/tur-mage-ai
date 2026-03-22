@@ -30,6 +30,7 @@ DATASETS = [
     "teams", "players", "countries", "roster", "schedule", "game_ids",
     "glossary", "draft", "standings", "skater_stats", "goalie_stats", "team_stats",
     "edge_skaters", "edge_goalies", "edge_teams", "games", "game_players",
+    "game_events", "game_stories",
 ]
 
 

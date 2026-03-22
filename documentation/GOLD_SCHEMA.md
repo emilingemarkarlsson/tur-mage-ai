@@ -99,3 +99,7 @@ Views are created by the **refresh_duckdb_views** block at the end of each pipel
 ### MotherDuck-synk
 
 Om `MOTHERDUCK_TOKEN` är satt i `.env` synkas Gold automatiskt till MotherDuck efter varje `refresh_duckdb_views`. Lokala vyer (som refererar Parquet) materialiseras till tabeller i molnet. Skapa databasen `nhl` i MotherDuck UI först om den inte finns.
+
+### Analys och dokumentation av datatäckning
+
+Kör `python scripts/analyze_motherduck_data.py` för att analysera innehållet i MotherDuck och generera **`documentation/MOTHERDUCK_DATA_COVERAGE.md`**. rapporten innehåller radantal per tabell, datumspann, säsonger, kolumntäckning och exempelrader.

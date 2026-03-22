@@ -40,6 +40,24 @@ def main():
         print("GAMES_START_DATE inte satt – antar 2010-01-01\n")
 
     games_year = (os.getenv("GAMES_YEAR") or "").strip()
+    # games_year.txt har företräde (samma som i loadern)
+    for state_dir in (
+        os.path.join(ROOT, "mage_project", "state"),
+        os.path.join(ROOT, "state"),
+    ):
+        txt_path = os.path.join(state_dir, "games_year.txt")
+        if os.path.isfile(txt_path):
+            try:
+                import re
+                with open(txt_path, "r", encoding="utf-8-sig") as f:
+                    raw = (f.read() or "").strip()
+                m = re.search(r"(19|20)\d{2}", raw)
+                if m:
+                    games_year = m.group(0)
+                    print(f"games_year.txt hittad: {games_year} (används istället för .env)\n")
+            except Exception:
+                pass
+            break
     print(f"Bucket: {bucket}")
     print(f"Prefix:  {PREFIX}")
     print(f"GAMES_START_DATE: {start_date}" + (f"  GAMES_YEAR: {games_year}" if games_year else ""))
