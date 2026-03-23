@@ -1,0 +1,29 @@
+blocks:
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - detect_anomalies
+  name: load analytics data
+  status: updated
+  type: data_loader
+  upstream_blocks: []
+  uuid: load_analytics_data
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - generate_insights
+  name: detect anomalies
+  status: updated
+  type: transformer
+  upstream_blocks:
+  - load_analytics_data
+  uuid: detect_anomalies
+- all_upstream_blocks_executed: true
+  downstream_blocks: []
+  name: generate insights
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - detect_anomalies
+  uuid: generate_insights
+name: analytics pipeline
+type: python
+uuid: analytics_pipeline

@@ -128,6 +128,16 @@ jobs:
           AWS_REGION: eu-central
         run: mage run mage_project games_pipeline
 
+      - name: Run analytics_pipeline
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+          MOTHERDUCK_DATABASE_NAME: nhl
+          LITELLM_BASE_URL: http://litellm-kkswc8gokk84c0o8oo84w44w.46.62.206.47.sslip.io
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          LITELLM_DEFAULT_MODEL: gemini-flash
+          LITELLM_MAX_INSIGHTS: "5"
+        run: python3 scripts/run_analytics_pipeline.py
+
       - name: Remove games_year.txt after manual run
         if: ${{ github.event.inputs.games_year != '' }}
         run: |
