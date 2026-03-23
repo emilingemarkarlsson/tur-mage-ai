@@ -8,6 +8,7 @@ Generate LLM narratives for top anomalies and persist to MotherDuck agent_insigh
 import json
 import os
 import sys
+import urllib.request
 from datetime import datetime
 
 import duckdb
@@ -113,6 +114,34 @@ def _call_litellm(prompt_context: str) -> tuple[str, str]:
         return lines[0][:120] if lines else "", raw
 
 
+def _notify_slack(stored_items: list) -> None:
+    """POST a summary of new insights to Slack via incoming webhook."""
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+    if not webhook_url or not stored_items:
+        return
+    lines = []
+    for item in stored_items:
+        z = item["zscore"]
+        headline = item.get("headline") or ""
+        lines.append(
+            f"• *{item['entity_name']}* ({item['team_abbr']}) — "
+            f"{item['insight_type']} — z={z:+.2f}"
+            + (f': "{headline}"' if headline else "")
+        )
+    text = f":ice_hockey_stick_and_puck: *NHL Agent — {len(stored_items)} new insight(s)*\n" + "\n".join(lines)
+    payload = json.dumps({"text": text}).encode()
+    try:
+        req = urllib.request.Request(
+            webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=10)
+        print(f"[generate_insights] Slack notification sent ({len(stored_items)} insights)")
+    except Exception as e:
+        print(f"[generate_insights] Slack notification failed: {e}")
+
+
 @data_exporter
 def export_data(insights: list, *args, **kwargs) -> None:
     if not insights:
@@ -126,6 +155,7 @@ def export_data(insights: list, *args, **kwargs) -> None:
     _ensure_insights_table(conn)
 
     stored, skipped, failed = 0, 0, 0
+    newly_stored = []
     for item in top:
         iid = item["insight_id"]
         if _already_stored(conn, item):
@@ -154,6 +184,7 @@ def export_data(insights: list, *args, **kwargs) -> None:
                 item["prompt_context"],
             ])
             stored += 1
+            newly_stored.append({**item, "headline": headline})
             print(f"[generate_insights] stored: {item['entity_name']} | {headline[:60]}")
         except Exception as e:
             failed += 1
@@ -161,3 +192,4 @@ def export_data(insights: list, *args, **kwargs) -> None:
 
     conn.close()
     print(f"[generate_insights] Done – stored: {stored}, skipped: {skipped}, failed: {failed}")
+    _notify_slack(newly_stored)

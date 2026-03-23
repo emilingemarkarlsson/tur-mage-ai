@@ -81,9 +81,9 @@ def _corsi_context(row: pd.Series) -> str:
     edge = "strong possession edge" if row.corsi_pct_avg_10g > 0.50 else "possession concerns"
     return (
         f"{row.team_abbr} has a 10-game Corsi% of {row.corsi_pct_avg_10g:.3f} "
-        f"({n} games analyzed) – {edge}. "
-        f"Corsi% below 0.45 or above 0.55 is statistically significant."
-    ).replace("{n}", str(int(row.n)))
+        f"({int(row.n)} games analyzed) – {edge}. "
+        f"Corsi% below 0.42 or above 0.58 is a statistically significant outlier."
+    )
 
 
 @transformer
