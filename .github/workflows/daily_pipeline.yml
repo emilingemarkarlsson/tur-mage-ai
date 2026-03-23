@@ -138,9 +138,12 @@ jobs:
           LITELLM_MAX_INSIGHTS: "5"
         run: |
           # mage-ai pulls in duckdb 1.5.x; MotherDuck extension requires <=1.2.x.
-          # Re-install compatible versions in an isolated venv to avoid conflicts.
+          # Install duckdb first, then motherduck with --no-deps to prevent pip
+          # from resolving motherduck's duckdb dependency and upgrading it.
           python3 -m venv /tmp/analytics_venv
-          /tmp/analytics_venv/bin/pip install -q "duckdb==1.2.2" motherduck openai python-dotenv
+          /tmp/analytics_venv/bin/pip install -q openai python-dotenv
+          /tmp/analytics_venv/bin/pip install -q "duckdb==1.2.2"
+          /tmp/analytics_venv/bin/pip install -q --no-deps motherduck
           /tmp/analytics_venv/bin/python3 scripts/run_analytics_pipeline.py
 
       - name: Remove games_year.txt after manual run
