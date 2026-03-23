@@ -30,6 +30,14 @@ if os.path.isfile(_env_file):
     from dotenv import load_dotenv
     load_dotenv(_env_file)
 
+# ── Step 0: Refresh feature store in MotherDuck ──────────────────────────────
+print("=" * 60)
+print("STEP 0: refresh_feature_store")
+print("=" * 60)
+sys.path.insert(0, _script_dir)
+from refresh_feature_store import refresh_feature_store
+refresh_feature_store()
+
 # ── Step 1: Load ─────────────────────────────────────────────────────────────
 print("=" * 60)
 print("STEP 1: load_analytics_data")
