@@ -24,7 +24,7 @@ Z_THRESHOLD = 1.0
 # Minimum games played in current season to have a meaningful baseline
 MIN_GAMES = 20
 # Current season – derived from most recent regular-season game in MotherDuck
-CURRENT_SEASON_SQL = "(SELECT MAX(season) FROM nhl.main.games WHERE game_type = '2')"
+CURRENT_SEASON_SQL = "(SELECT MAX(season) FROM games WHERE game_type = '2')"
 
 
 def _md_conn() -> duckdb.DuckDBPyConnection:
@@ -32,9 +32,9 @@ def _md_conn() -> duckdb.DuckDBPyConnection:
     if not token:
         raise RuntimeError("MOTHERDUCK_TOKEN not set")
     db = os.getenv("MOTHERDUCK_DATABASE_NAME", "nhl").strip() or "nhl"
-    conn = duckdb.connect(":memory:")
-    conn.execute("INSTALL motherduck; LOAD motherduck;")
-    conn.execute(f"ATTACH 'md:{db}' AS nhl (READ_ONLY);")
+    # Direct MotherDuck connection – works with the motherduck pip package
+    # without needing INSTALL/LOAD extension (avoids HTTP 404 on new DuckDB versions)
+    conn = duckdb.connect(f"md:{db}?motherduck_token={token}")
     return conn
 
 
@@ -62,7 +62,7 @@ def load_data(*args, **kwargs) -> dict:
                 goals_season,
                 gp_season,
                 game_recency_rank
-            FROM nhl.main.player_rolling_stats
+            FROM player_rolling_stats
             WHERE season = {CURRENT_SEASON_SQL}
               AND gp_season >= {MIN_GAMES}
               AND game_recency_rank = 1
@@ -92,7 +92,7 @@ def load_data(*args, **kwargs) -> dict:
                 sv_pct_zscore_5v20,
                 gp_season,
                 game_recency_rank
-            FROM nhl.main.goalie_rolling_stats
+            FROM goalie_rolling_stats
             WHERE season = {CURRENT_SEASON_SQL}
               AND gp_season >= 10
               AND game_recency_rank = 1
@@ -124,7 +124,7 @@ def load_data(*args, **kwargs) -> dict:
                 gf_avg_10g,
                 ga_avg_10g,
                 game_recency_rank
-            FROM nhl.main.team_rolling_stats
+            FROM team_rolling_stats
             WHERE season = {CURRENT_SEASON_SQL}
               AND gp_season >= {MIN_GAMES}
               AND game_recency_rank = 1
@@ -143,7 +143,7 @@ def load_data(*args, **kwargs) -> dict:
             WITH recent AS (
                 SELECT team_abbr, game_date, corsi_for, corsi_against, corsi_pct,
                     ROW_NUMBER() OVER (PARTITION BY team_abbr ORDER BY game_date DESC) AS rn
-                FROM nhl.main.team_corsi
+                FROM team_corsi
                 WHERE TRY_CAST(game_type AS INTEGER) = 2
                   AND corsi_pct IS NOT NULL
             ),
@@ -151,7 +151,7 @@ def load_data(*args, **kwargs) -> dict:
                 SELECT tc.team_abbr,
                     AVG(tc.corsi_pct) AS corsi_pct_avg_10g,
                     COUNT(*)          AS n
-                FROM nhl.main.team_corsi tc
+                FROM team_corsi tc
                 JOIN (SELECT DISTINCT team_abbr, game_date AS latest
                       FROM recent WHERE rn = 1) r ON r.team_abbr = tc.team_abbr
                 WHERE tc.game_type = '2'

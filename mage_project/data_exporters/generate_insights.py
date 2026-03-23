@@ -40,15 +40,13 @@ def _md_conn_rw() -> duckdb.DuckDBPyConnection:
     if not token:
         raise RuntimeError("MOTHERDUCK_TOKEN not set")
     db = os.getenv("MOTHERDUCK_DATABASE_NAME", "nhl").strip() or "nhl"
-    conn = duckdb.connect(":memory:")
-    conn.execute("INSTALL motherduck; LOAD motherduck;")
-    conn.execute(f"ATTACH 'md:{db}' AS nhl;")  # read-write
+    conn = duckdb.connect(f"md:{db}?motherduck_token={token}")
     return conn
 
 
 def _ensure_insights_table(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS nhl.main.agent_insights (
+        CREATE TABLE IF NOT EXISTS agent_insights (
             insight_id    VARCHAR PRIMARY KEY,
             generated_at  TIMESTAMP,
             insight_type  VARCHAR,
@@ -71,7 +69,7 @@ def _already_stored(conn: duckdb.DuckDBPyConnection, item: dict) -> bool:
     # Idempotent on both insight_id AND (entity_id, game_date) to prevent duplicates
     # when insight_type changes between runs (e.g. cold_spell → hot_streak)
     rows = conn.execute(
-        """SELECT 1 FROM nhl.main.agent_insights
+        """SELECT 1 FROM agent_insights
            WHERE insight_id = ?
               OR (entity_id = ? AND game_date = ? AND entity_type = ?)
            LIMIT 1""",
@@ -138,7 +136,7 @@ def export_data(insights: list, *args, **kwargs) -> None:
         try:
             headline, body = _call_litellm(item["prompt_context"])
             conn.execute("""
-                INSERT INTO nhl.main.agent_insights VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO agent_insights VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
                 iid,
                 datetime.utcnow(),

@@ -1,6 +1,7 @@
 mage-ai[s3,dbt]
 polars
 duckdb>=1.4.4
+motherduck
 pyyaml
 boto3
 streamlit
