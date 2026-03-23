@@ -141,7 +141,7 @@ jobs:
           # Install duckdb first, then motherduck with --no-deps to prevent pip
           # from resolving motherduck's duckdb dependency and upgrading it.
           python3 -m venv /tmp/analytics_venv
-          /tmp/analytics_venv/bin/pip install -q openai python-dotenv
+          /tmp/analytics_venv/bin/pip install -q openai python-dotenv pandas
           /tmp/analytics_venv/bin/pip install -q "duckdb==1.2.2"
           /tmp/analytics_venv/bin/pip install -q --no-deps motherduck
           /tmp/analytics_venv/bin/python3 scripts/run_analytics_pipeline.py
