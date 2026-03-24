@@ -14,7 +14,7 @@ Appens hjärta är en **AI-driven frågeassistent** som låter användare ställ
 
 ## Tech stack – motiverade val
 
-| Lager | Verktyg | Motivering |
+| Lager | Verktyg | Motivering |  
 |---|---|---|
 | Frontend | **Next.js 15 (App Router)** | Full SaaS-kontroll, routing, API routes, React Server Components |
 | UI | **shadcn/ui + Tailwind CSS** | Professionellt utseende, tillgängligt, komponenter inkluderade |
