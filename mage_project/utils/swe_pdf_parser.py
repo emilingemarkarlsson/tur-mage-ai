@@ -689,9 +689,12 @@ def _parse_coach_line(line: str, game_id: str, game_date: str,
 # ---------------------------------------------------------------------------
 
 _LINEUP_PLAYER = re.compile(
-    r"(\d{1,3})\s+([A-ZÄÅÖ][A-ZÄÅÖÜ,\s\-]+?)\s+\((LW|CE|RW|LD|RD|GK|G|D|F)\)"
+    r"(\d{1,3})\s+([A-ZÄÅÖ][A-Za-zäåöüÄÅÖÜ,\s\-\.]+?)\s+\((LW|CE|RW|LD|RD|GK|G|D|F)\)"
 )
 _LINEUP_TEAM = re.compile(r"^Team\s*$")
+_LINEUP_INLINE_LABEL = re.compile(
+    r"^(1st|2nd|3rd|4th|Extra[ ]players)\s+(\d.+)$", re.IGNORECASE
+)
 
 
 def parse_lineup(pdf_bytes: bytes, game_id: str, game_date: str) -> Dict[str, Any]:
@@ -722,34 +725,53 @@ def parse_lineup(pdf_bytes: bytes, game_id: str, game_date: str) -> Dict[str, An
         if not ls:
             continue
 
-        # Team label (standalone "Team" followed by team name on next line)
-        # Or directly "MoDo Hockey" / "Almtuna IS"
+        # Hoppa förbi kända sidhuvud
         if ls == "Team":
             continue
 
-        # Line number labels: "1st", "2nd", "3rd", "4th", "Extra players"
+        # Enbart line-label (kolla FÖRE lagnamn för att undvika "Extra players" som lagnamn)
         line_m = re.match(r"^(1st|2nd|3rd|4th|Extra players)$", ls, re.IGNORECASE)
         if line_m:
             current_line = line_m.group(1)
             continue
 
-        # Player entries with position in parens: "31 TIKKANEN, Henrik"
-        # or "7 NÄSÉN, Pontus (RD) 2 HASA, Filip (LD)"
-        for pm in _LINEUP_PLAYER.finditer(ls):
-            number, name, position = pm.groups()
-            lineup.append({
-                "game_id": game_id,
-                "game_date": game_date,
-                "team": current_team,
-                "line_number": current_line,
-                "number": number.strip(),
-                "name": name.strip().rstrip(","),
-                "position": position,
-            })
+        # Lagnamn med valfri färg-suffix: "Leksands IF (White)", "Frölunda HC (Red)"
+        clean_team = re.sub(r"\s*\([A-Za-zäåöü]+\)\s*$", "", ls).strip()
+        if (re.match(r"^[A-ZÄÅÖ][A-Za-zäåöüÄÅÖÜ\s\-]+$", clean_team)
+                and len(clean_team) > 3
+                and not re.search(r"\d", clean_team)
+                and clean_team not in ("Official Line Up", "HockeyAllsvenskan",
+                                       "J20 Nationell", "Linesman", "SHL", "Team")):
+            current_team = clean_team
+            current_line = None
             continue
 
-        # Goalkeeper entries without position in parens: "1 WILLIAMSSON, Tex"
-        gk_m = re.match(r"^(\d{1,2})\s+([A-ZÄÅÖ][A-ZÄÅÖÜ,\s\-]+)$", ls)
+        # Inline line-label + spelare på samma rad: "3rd 26 HEENS, Isac (LD) ..."
+        inline_m = _LINEUP_INLINE_LABEL.match(ls)
+        if inline_m:
+            current_line = inline_m.group(1)
+            ls = inline_m.group(2)  # bearbeta resten som en vanlig spelarrad
+
+        # Spelare med position i parentes: "10 JOHANSSON, Anton (RD) 36 MILOSEVIC, Stefan (LD)"
+        player_matches = list(_LINEUP_PLAYER.finditer(ls))
+        if player_matches:
+            for pm in player_matches:
+                number, name, position = pm.groups()
+                lineup.append({
+                    "game_id": game_id,
+                    "game_date": game_date,
+                    "team": current_team,
+                    "line_number": current_line,
+                    "number": number.strip(),
+                    "name": name.strip().rstrip(","),
+                    "position": position,
+                })
+            continue
+
+        # Målvaktpost utan position i parentes: "37 HELLSTEN, Jakob" eller "1 JOHANSSON, Lars"
+        gk_m = re.match(
+            r"^(\d{1,2})\s+([A-ZÄÅÖ][A-Za-zäåöüÄÅÖÜ,\s\-]+)$", ls
+        )
         if gk_m and current_team:
             number, name = gk_m.groups()
             lineup.append({
@@ -761,13 +783,6 @@ def parse_lineup(pdf_bytes: bytes, game_id: str, game_date: str) -> Dict[str, An
                 "name": name.strip().rstrip(","),
                 "position": "GK",
             })
-            continue
-
-        # Team name detection: multi-word capitalized not matching other patterns
-        if re.match(r"^[A-ZÄÅÖ][A-Za-zäåöüÄÅÖÜ\s\-]+$", ls) and len(ls) > 3 and not re.search(r"\d", ls):
-            if ls not in ("Official Line Up", "HockeyAllsvenskan", "J20 Nationell", "Linesman"):
-                current_team = ls
-                current_line = None
 
     return {"referees": referees, "starting_lineup": lineup}
 
