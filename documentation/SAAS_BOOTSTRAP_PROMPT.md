@@ -197,6 +197,47 @@ Databasen heter `nhl` i MotherDuck. Alla tabeller är i `main`-schemat.
 ### EDGE (NHL tracking)
 - `edge_skaters`, `edge_goalies`, `edge_teams` – NHL EDGE ledare per kategori per säsong
 
+### Proaktiva insikter (förberäknade av AI-agenten)
+
+**`agent_insights`** – LLM-genererade insikter, uppdateras dagligen
+- `insight_id` VARCHAR (PK)
+- `generated_at` TIMESTAMP
+- `insight_type` VARCHAR – hot_streak | breakout | cold_spell | slump | goalie_hot | goalie_cold | team_surge | team_collapse | possession_edge
+- `entity_type` VARCHAR – player | team
+- `entity_id` VARCHAR – player_id eller team_abbr
+- `entity_name` VARCHAR – "Connor McDavid" eller "TOR"
+- `team_abbr` VARCHAR
+- `severity` DOUBLE – 0.0–1.0
+- `zscore` DOUBLE – z-score bakom insikten
+- `season` VARCHAR, `game_date` DATE
+- `headline` VARCHAR – kort rubrik (max 10 ord)
+- `body` TEXT – 2–3 meningar med analys
+- `prompt_context` TEXT – rådata som skickades till LLM
+
+### Feature store (förberäknade rolling stats)
+
+**`player_rolling_stats`** – 767 158 rader, en rad per spelare per match
+- Alla kolumner från player_game_stats plus:
+- `pts_avg_5g`, `pts_avg_10g`, `pts_avg_20g` DOUBLE
+- `pts_zscore_5v20`, `goals_zscore_5v20` DOUBLE
+- `pts_season`, `goals_season`, `gp_season` DOUBLE
+- `game_recency_rank` BIGINT – 1 = senaste matchen per spelare
+
+**`goalie_rolling_stats`** – 45 352 rader
+- `sv_pct_avg_5g`, `sv_pct_avg_10g`, `sv_pct_avg_20g` DOUBLE
+- `sv_pct_zscore_5v20` DOUBLE
+- `gp_season`, `game_recency_rank` BIGINT
+
+**`team_rolling_stats`** – 39 138 rader
+- `pts_avg_5g`, `pts_avg_20g`, `pts_zscore_5v20` DOUBLE
+- `wins_last_5`, `losses_last_5` DOUBLE
+- `gf_avg_10g`, `ga_avg_10g` DOUBLE
+- `pts_cumulative`, `gp_season`, `game_recency_rank`
+
+**`team_corsi`** – 42 804 rader, en rad per lag per match
+- `corsi_for`, `corsi_against` BIGINT
+- `corsi_pct` DOUBLE – andel skottförsök (0.42–0.58 = normalt)
+
 ### Datastorlek
 - games: 21 402 rader (2010–2026)
 - player_game_stats: 853 700 rader
@@ -204,6 +245,7 @@ Databasen heter `nhl` i MotherDuck. Alla tabeller är i `main`-schemat.
 - skater_stats: 15 639 rader (17 säsonger)
 - standings: 524 rader
 - playoff_brackets: 263 serier
+- agent_insights: växer dagligen (LLM-narrativ per anomali)
 
 ---
 
@@ -233,7 +275,13 @@ KEY RULES:
 TABLES AVAILABLE:
 games, team_game_stats, team_game_stats_extended, player_game_stats, game_players,
 game_events, game_stories, teams, players, roster, schedule, playoff_brackets,
-standings, skater_stats, goalie_stats, team_stats, edge_skaters, edge_goalies, edge_teams
+standings, skater_stats, goalie_stats, team_stats, edge_skaters, edge_goalies, edge_teams,
+agent_insights, player_rolling_stats, goalie_rolling_stats, team_rolling_stats, team_corsi
+
+FEATURE STORE TIPS:
+- For current form: player_rolling_stats WHERE game_recency_rank = 1 AND season = (SELECT MAX(season) FROM games WHERE game_type = '2')
+- For AI insights: SELECT headline, body, entity_name, insight_type FROM agent_insights ORDER BY generated_at DESC LIMIT 10
+- For Corsi outliers: team_corsi WHERE corsi_pct < 0.42 OR corsi_pct > 0.58
 
 Return ONLY the SQL query, no explanation, no markdown code blocks.
 ```
@@ -282,9 +330,11 @@ Return ONLY the SQL query, no explanation, no markdown code blocks.
 - Data: playoff_brackets
 
 **7. Proaktiva insikter (startsida)**
-- "Senaste 24h": summering av gårdagens matcher via LLM
-- Hot streaks: lag/spelare med ovanligt bra form senaste 5 matcher
-- Data: team_game_stats + player_game_stats, LLM-sammanfattning
+- Läs direkt från `agent_insights` – allt är förberäknat av AI-agenten, ingen LLM-körning behövs i frontend
+- Visa senaste 5–10 insikter sorterade på `generated_at DESC`
+- Färgkoda per `insight_type`: 🔥 hot_streak, ❄️ cold_spell, 📈 team_surge, 🥅 goalie_hot etc.
+- Klickbar kort → spelarsida / lagsida
+- Använd `player_rolling_stats WHERE game_recency_rank = 1` för trendvyer utan egna fönsterfunktioner
 
 ### Fas 3 (SaaS-lager)
 
