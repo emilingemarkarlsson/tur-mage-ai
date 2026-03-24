@@ -128,16 +128,25 @@ def _sync_to_motherduck(db_path: str):
         conn.close()
         return
 
-    # Hämta vilka tabeller/vyer som finns lokalt
+    # Hämta vilka tabeller/vyer som finns lokalt (verifiera existens)
     try:
         rows = conn.execute(
             "SELECT table_name FROM local.information_schema.tables "
             "WHERE table_schema = 'main' AND table_type IN ('BASE TABLE', 'VIEW') "
             "ORDER BY table_name"
         ).fetchall()
-        tables = [r[0] for r in rows]
+        candidate_tables = [r[0] for r in rows]
     except Exception:
-        tables = SWE_DATASETS
+        candidate_tables = SWE_DATASETS
+
+    # Filtrera bort tabeller som saknar data lokalt
+    tables = []
+    for t in candidate_tables:
+        try:
+            conn.execute(f'SELECT 1 FROM local.main."{t}" LIMIT 0')
+            tables.append(t)
+        except Exception:
+            print(f"[swe motherduck] {t}: lokal vy saknas, hoppar över")
 
     ok, fail = 0, 0
     try:
