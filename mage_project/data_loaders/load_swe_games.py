@@ -110,12 +110,15 @@ def _list_available_dates(client, bucket: str) -> list:
     return sorted(dates)
 
 
-def _load_game_ids_for_date(client, bucket: str, date: str) -> list:
-    """Läser raw/games/YYYY-MM-DD.json och returnerar alla game_id:n."""
+def _load_game_metas_for_date(client, bucket: str, date: str) -> list:
+    """Läser raw/games/YYYY-MM-DD.json och returnerar {game_id, league_id} per match."""
     key = f"{GAMES_PREFIX}{date}.json"
     try:
         payload = read_json(client, bucket, key)
-        return [str(g["game_id"]) for g in (payload.get("games") or []) if g.get("game_id")]
+        return [
+            {"game_id": str(g["game_id"]), "league_id": str(g.get("league_id") or "")}
+            for g in (payload.get("games") or []) if g.get("game_id")
+        ]
     except Exception as exc:
         print(f"[swe loader] Kunde inte läsa datum-index {key}: {exc}")
         return []
@@ -145,10 +148,14 @@ def _process_batch(batch_dates, client, bucket, kwargs, args):
 
     games_batch = []
     for date in batch_dates:
-        game_ids = _load_game_ids_for_date(client, bucket, date)
-        for gid in game_ids:
+        game_metas = _load_game_metas_for_date(client, bucket, date)
+        for meta in game_metas:
+            gid = meta["game_id"]
             detail = _load_game_detail(client, bucket, gid)
             if detail:
+                # Injicera league_id från dagsindexet om det saknas i game_details
+                if not detail.get("league_id"):
+                    detail["league_id"] = meta.get("league_id", "")
                 games_batch.append({"game_date": date, "game_id": gid, "payload": detail})
 
     if not games_batch:

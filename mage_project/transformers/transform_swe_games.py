@@ -17,7 +17,7 @@ if "transformer" not in globals():
 
 # Kolumner med fast schema (undviker Parquet-schema-mismatch vid union)
 GAMES_COLUMNS = [
-    "game_id", "game_date", "season", "league", "league_id",
+    "game_id", "game_date", "season", "league", "league_id", "game_type",
     "home_team", "away_team", "home_score", "away_score",
     "home_points", "away_points", "venue", "time",
     "home_shots", "away_shots", "home_saves", "away_saves",
@@ -89,6 +89,22 @@ def _derive_season(date_str: str) -> str:
     return date_str[:4] if date_str and len(date_str) >= 4 else ""
 
 
+def _derive_game_type(league: str) -> str:
+    """Härledd matchtyp från liga-strängen.
+    'SM-slutspel SHL' → 'playoff', 'Play Out SHL' → 'play_out', etc.
+    """
+    ll = league.lower()
+    if "slutspel" in ll:
+        return "playoff"
+    if "play out" in ll or "play-out" in ll:
+        return "play_out"
+    if "kval" in ll:
+        return "qualification"
+    if "chl" in ll or "champions" in ll:
+        return "champions_league"
+    return "regular"
+
+
 def _parse_result(result_str: str | None) -> tuple:
     """'2 - 3' → (2, 3). Returnerar (None, None) om ogiltigt format."""
     if not result_str:
@@ -148,12 +164,14 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
 
     scraped_at = (payload.get("metadata") or {}).get("scraped_at") or ""
 
+    league_str = _clean_str(payload.get("league"))
     return {
         "game_id": game_id,
         "game_date": parse_date(game_date),
         "season": _derive_season(game_date),
-        "league": _clean_str(payload.get("league")),
+        "league": league_str,
         "league_id": str(payload.get("league_id") or ""),
+        "game_type": _derive_game_type(league_str),
         "home_team": _clean_str(payload.get("home_team")),
         "away_team": _clean_str(payload.get("away_team")),
         "home_score": home_score,
@@ -342,27 +360,36 @@ def _extract_period_scores(payload: Dict[str, Any], game_id: str, game_date: str
 
 def _extract_referees_json(payload: Dict[str, Any], game_id: str, game_date: str,
                             league: str, season: str) -> List[Dict[str, Any]]:
+    """Hanterar både listformat (str) och dict-format för referees/linesmen."""
     rows = []
     for ref in payload.get("referees") or []:
-        if not isinstance(ref, dict):
+        if isinstance(ref, str):
+            name, role = ref, "Referee"
+        elif isinstance(ref, dict):
+            name, role = ref.get("name") or "", ref.get("role") or "Referee"
+        else:
             continue
         rows.append({
             "game_id": game_id,
             "game_date": parse_date(game_date),
             "season": season,
             "league": league,
-            "name": ref.get("name") or "",
-            "role": ref.get("role") or "Referee",
+            "name": name,
+            "role": role,
         })
     for linesman in payload.get("linesmen") or []:
-        if not isinstance(linesman, dict):
+        if isinstance(linesman, str):
+            name = linesman
+        elif isinstance(linesman, dict):
+            name = linesman.get("name") or ""
+        else:
             continue
         rows.append({
             "game_id": game_id,
             "game_date": parse_date(game_date),
             "season": season,
             "league": league,
-            "name": linesman.get("name") or "",
+            "name": name,
             "role": "Linesman",
         })
     return rows
