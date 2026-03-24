@@ -71,6 +71,58 @@ def _mmss_to_seconds(s: str | None) -> Optional[int]:
     return None
 
 
+def _compute_gaa(ga: Optional[int], toi_str: Optional[str]) -> Optional[float]:
+    """Beräkna GAA (goals against average per 60 min) från GA och TOI (MM:SS)."""
+    if ga is None or not toi_str:
+        return None
+    m = re.match(r"^(\d+):(\d{2})$", str(toi_str).strip())
+    if not m:
+        return None
+    toi_minutes = int(m.group(1)) + int(m.group(2)) / 60
+    if toi_minutes == 0:
+        return None
+    return round(ga / (toi_minutes / 60), 2)
+
+
+def _extract_goal_players(
+    rest: str,
+) -> Tuple[str, str, Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """
+    Extrahera målskytt och upp till 2 assistenter från rest-strängen efter goal_type.
+    Format: "59 HEDLUND, Pelle [29 JOHANSSON, Mattias [7 BERGLUND, Gustav]]"
+    Returnerar: (scorer_num, scorer_name, assist1_num, assist1_name, assist2_num, assist2_name)
+    """
+    # Dela vid varje nytt spelar-segment: <whitespace><1-3 siffror><mellanslag><stor bokstav>
+    segments = re.split(r"\s+(?=\d{1,3}\s+[A-ZÄÅÖ])", rest.strip())
+    players: List[Tuple[str, str]] = []
+    for seg in segments:
+        parts = seg.strip().split(None, 1)
+        if parts and parts[0].isdigit():
+            players.append((parts[0], parts[1].strip() if len(parts) > 1 else ""))
+
+    scorer_num = players[0][0] if len(players) > 0 else ""
+    scorer_name = players[0][1] if len(players) > 0 else ""
+    assist1_num = players[1][0] if len(players) > 1 else None
+    assist1_name = players[1][1] if len(players) > 1 else None
+    assist2_num = players[2][0] if len(players) > 2 else None
+    assist2_name = players[2][1] if len(players) > 2 else None
+    return scorer_num, scorer_name, assist1_num, assist1_name, assist2_num, assist2_name
+
+
+def _split_penalty_description(desc: str) -> Tuple[str, str]:
+    """
+    Dela upp straffbeskrivning i spelarnamn och straffrubrik.
+    T.ex. "HEDLUND, Pelle Roughing" → ("HEDLUND, Pelle", "Roughing")
+    """
+    m = re.match(
+        r"^([A-ZÄÅÖ][A-ZÄÅÖÜ\-]+,\s+[A-Za-zäåöü][a-zäåöü\-]+)\s+(.+)$",
+        desc.strip(),
+    )
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return desc.strip(), ""
+
+
 # ---------------------------------------------------------------------------
 # Official_Game_Report
 # ---------------------------------------------------------------------------
@@ -296,23 +348,21 @@ def _parse_period_actions(period_text: str, period_label, home_abbr: str, away_a
         if m:
             event_time, team_abbr, score, goal_type, rest = m.groups()
             score = score.strip()
-            # rest = "59 HEDLUND, Pelle Participation (On ice)"
-            # or    "59 HEDLUND, Pelle 29 JOHANSSON, Mattias"
             rest = rest.strip()
-            # Remove "Participation (On ice)" suffix
             rest = re.sub(r"\s*Participation\s*\(On ice\).*", "", rest).strip()
-            # Split number and name
-            player_parts = rest.split(None, 1)
-            player_number = player_parts[0] if player_parts else ""
-            player_name = player_parts[1].strip() if len(player_parts) > 1 else ""
+            scorer_num, scorer_name, a1_num, a1_name, a2_num, a2_name = _extract_goal_players(rest)
             goals.append({
                 "period": period_label,
                 "event_time": event_time,
                 "team_abbr": team_abbr.strip(),
                 "score": score,
                 "goal_type": goal_type.strip(),
-                "player_number": player_number,
-                "player_name": player_name,
+                "scorer_number": scorer_num,
+                "scorer_name": scorer_name,
+                "assist1_number": a1_num,
+                "assist1_name": a1_name,
+                "assist2_number": a2_num,
+                "assist2_name": a2_name,
             })
             last_goal_time = event_time
             last_goal_score = score
@@ -346,15 +396,15 @@ def _parse_period_actions(period_text: str, period_label, home_abbr: str, away_a
         m = _PENALTY_LINE.match(ls)
         if m:
             event_time, team_abbr, minutes, player_number, rest = m.groups()
-            player_name = rest.strip()
-            # Often last word(s) are the infraction type, but we can't reliably split
+            player_name, infraction = _split_penalty_description(rest)
             penalties.append({
                 "period": period_label,
                 "event_time": event_time,
                 "team_abbr": team_abbr.strip(),
                 "minutes": _to_int(minutes),
                 "player_number": player_number,
-                "description": player_name,
+                "player_name": player_name,
+                "infraction": infraction,
             })
             continue
 
@@ -842,6 +892,8 @@ def parse_player_summary(pdf_bytes: bytes, game_id: str, game_date: str) -> Dict
                     "svs_pct": _to_float(svs_pct),
                     "toi": mip,
                     "gaa": _to_float(gaa),
+                    "pp_svs": None,
+                    "pp_shots_against": None,
                     "source": "Player_Summary",
                 })
 
@@ -1007,6 +1059,7 @@ def parse_media_summary(pdf_bytes: bytes, game_id: str, game_date: str) -> Dict[
             m = _GOALIE_ROW_MEDIA.match(ls)
             if m:
                 number, lastname, firstname, saves, ga, sog, svs_pct, pp_svs, pp_shots, toi = m.groups()
+                ga_int = _to_int(ga)
                 goalie_stats.append({
                     "game_id": game_id,
                     "game_date": game_date,
@@ -1014,11 +1067,13 @@ def parse_media_summary(pdf_bytes: bytes, game_id: str, game_date: str) -> Dict[
                     "number": number,
                     "name": f"{lastname} {firstname}",
                     "sog": _to_int(sog),
-                    "ga": _to_int(ga),
+                    "ga": ga_int,
                     "saves": _to_int(saves),
                     "svs_pct": _to_float(svs_pct),
                     "toi": toi,
-                    "gaa": None,
+                    "gaa": _compute_gaa(ga_int, toi),
+                    "pp_svs": _to_int(pp_svs),
+                    "pp_shots_against": _to_int(pp_shots),
                     "source": "Media_Game_Summary",
                 })
 

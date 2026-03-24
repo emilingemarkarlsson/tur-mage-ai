@@ -21,18 +21,23 @@ UPSERT_KEYS = {
     "game_goalkeepers":   ("game_id", "team", "name"),
     "game_lineups":       ("game_id", "team", "position", "player_number"),
     # PDF-extrakt
-    "game_referees":      ("game_id", "name"),
-    "game_period_stats":  ("game_id", "team", "period"),
-    "game_roster":        ("game_id", "team", "number", "name"),
-    "game_player_stats":  ("game_id", "team", "number", "name"),
-    "game_goalie_stats":  ("game_id", "team", "number"),
-    "game_on_ice":        ("game_id", "period", "event_time", "team_abbr", "player_number"),
+    "game_referees":        ("game_id", "name"),
+    "game_period_stats":    ("game_id", "team", "period"),
+    "game_roster":          ("game_id", "team", "number", "name"),
+    "game_player_stats":    ("game_id", "team", "number", "name"),
+    "game_goalie_stats":    ("game_id", "team", "number"),
+    "game_on_ice":          ("game_id", "period", "event_time", "team_abbr", "player_number"),
+    "game_goals":           ("game_id", "period", "event_time", "team_abbr", "scorer_number"),
+    "game_penalties":       ("game_id", "period", "event_time", "team_abbr", "player_number"),
+    "game_gk_changes":      ("game_id", "period", "event_time", "team_abbr", "direction", "player_number"),
+    "game_starting_lineup": ("game_id", "team", "number"),
 }
 
 SWE_DATASETS = [
     "games", "game_events", "game_goalkeepers", "game_lineups",
     "game_referees", "game_period_stats", "game_roster",
     "game_player_stats", "game_goalie_stats", "game_on_ice",
+    "game_goals", "game_penalties", "game_gk_changes", "game_starting_lineup",
 ]
 
 

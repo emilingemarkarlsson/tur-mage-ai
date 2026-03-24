@@ -67,12 +67,16 @@ def export_swe_pdf_parquet(data: dict, *args, **kwargs):
     silver_swe = os.path.join(data_lake, "silver", "swe")
 
     tables = {
-        "game_referees":    data.get("game_referees"),
-        "game_period_stats": data.get("game_period_stats"),
-        "game_roster":      data.get("game_roster"),
-        "game_player_stats": data.get("game_player_stats"),
-        "game_goalie_stats": data.get("game_goalie_stats"),
-        "game_on_ice":      data.get("game_on_ice"),
+        "game_referees":        data.get("game_referees"),
+        "game_period_stats":    data.get("game_period_stats"),
+        "game_roster":          data.get("game_roster"),
+        "game_player_stats":    data.get("game_player_stats"),
+        "game_goalie_stats":    data.get("game_goalie_stats"),
+        "game_on_ice":          data.get("game_on_ice"),
+        "game_goals":           data.get("game_goals"),
+        "game_penalties":       data.get("game_penalties"),
+        "game_gk_changes":      data.get("game_gk_changes"),
+        "game_starting_lineup": data.get("game_starting_lineup"),
     }
 
     total_rows = 0

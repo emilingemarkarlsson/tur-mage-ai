@@ -56,7 +56,29 @@ PLAYER_STATS_COLUMNS = [
 GOALIE_STATS_COLUMNS = [
     "game_id", "game_date", "team", "number", "name",
     "sog", "ga", "saves", "svs_pct", "toi", "gaa",
+    "pp_svs", "pp_shots_against",
     "source",
+]
+
+GOALS_COLUMNS = [
+    "game_id", "game_date", "period", "event_time", "team_abbr", "score", "goal_type",
+    "scorer_number", "scorer_name",
+    "assist1_number", "assist1_name",
+    "assist2_number", "assist2_name",
+]
+
+PENALTIES_COLUMNS = [
+    "game_id", "game_date", "period", "event_time", "team_abbr",
+    "minutes", "player_number", "player_name", "infraction",
+]
+
+GK_CHANGES_COLUMNS = [
+    "game_id", "game_date", "period", "event_time", "team_abbr",
+    "direction", "player_number", "player_name",
+]
+
+STARTING_LINEUP_COLUMNS = [
+    "game_id", "game_date", "team", "line_number", "number", "name", "position",
 ]
 
 ON_ICE_COLUMNS = [
@@ -106,6 +128,10 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
     all_player_stats: List[Dict] = []
     all_goalie_stats: List[Dict] = []
     all_on_ice: List[Dict] = []
+    all_goals: List[Dict] = []
+    all_penalties: List[Dict] = []
+    all_gk_changes: List[Dict] = []
+    all_starting_lineup: List[Dict] = []
 
     seen_referees: set = set()
 
@@ -134,6 +160,11 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
             # On-ice events
             all_on_ice.extend(result.get("on_ice_events", []))
 
+            # Händelsetabeller
+            all_goals.extend(result.get("goals", []))
+            all_penalties.extend(result.get("penalties", []))
+            all_gk_changes.extend(result.get("gk_changes", []))
+
         # --- Official_Team_Roster ---
         if "Official_Team_Roster" in pdfs:
             result = parse_pdf("Official_Team_Roster", pdfs["Official_Team_Roster"], game_id, game_date)
@@ -155,14 +186,16 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
             player_rows_media = result.get("player_stats", [])
             goalie_rows_media = result.get("goalie_stats", [])
 
-        # Official_Line_Up: referees backup (om ej i Game_Report)
-        if "Official_Line_Up" in pdfs and not any(r["game_id"] == game_id for r in all_referees):
+        # Official_Line_Up: referees backup + starting lineup
+        if "Official_Line_Up" in pdfs:
             result = parse_pdf("Official_Line_Up", pdfs["Official_Line_Up"], game_id, game_date)
-            for ref in result.get("referees", []):
-                key = (game_id, ref.get("name", ""))
-                if key not in seen_referees:
-                    seen_referees.add(key)
-                    all_referees.append(ref)
+            if not any(r["game_id"] == game_id for r in all_referees):
+                for ref in result.get("referees", []):
+                    key = (game_id, ref.get("name", ""))
+                    if key not in seen_referees:
+                        seen_referees.add(key)
+                        all_referees.append(ref)
+            all_starting_lineup.extend(result.get("starting_lineup", []))
 
         merged_players = _merge_player_stats(player_rows_official, player_rows_media)
         all_player_stats.extend(merged_players)
@@ -177,12 +210,15 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
     player_stats_df = _df(all_player_stats, PLAYER_STATS_COLUMNS)
     goalie_stats_df = _df(all_goalie_stats, GOALIE_STATS_COLUMNS)
     on_ice_df = _df(all_on_ice, ON_ICE_COLUMNS)
+    goals_df = _df(all_goals, GOALS_COLUMNS)
+    penalties_df = _df(all_penalties, PENALTIES_COLUMNS)
+    gk_changes_df = _df(all_gk_changes, GK_CHANGES_COLUMNS)
+    starting_lineup_df = _df(all_starting_lineup, STARTING_LINEUP_COLUMNS)
 
-    # Normalisera kolumntyper
-    if not period_stats_df.empty:
-        period_stats_df["period"] = period_stats_df["period"].astype(str)
-    if not on_ice_df.empty:
-        on_ice_df["period"] = on_ice_df["period"].astype(str)
+    # Normalisera kolumntyper (period = str, blandat int/str: 1,2,3,"OT","SO","total")
+    for df in (period_stats_df, on_ice_df, goals_df, penalties_df, gk_changes_df):
+        if not df.empty and "period" in df.columns:
+            df["period"] = df["period"].astype(str)
 
     # Deduplicera
     if not referees_df.empty:
@@ -208,12 +244,34 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
             subset=["game_id", "period", "event_time", "team_abbr", "player_number"],
             keep="first",
         )
+    if not goals_df.empty:
+        goals_df = goals_df.drop_duplicates(
+            subset=["game_id", "period", "event_time", "team_abbr", "scorer_number"],
+            keep="first",
+        )
+    if not penalties_df.empty:
+        penalties_df = penalties_df.drop_duplicates(
+            subset=["game_id", "period", "event_time", "team_abbr", "player_number"],
+            keep="first",
+        )
+    if not gk_changes_df.empty:
+        gk_changes_df = gk_changes_df.drop_duplicates(
+            subset=["game_id", "period", "event_time", "team_abbr", "direction", "player_number"],
+            keep="first",
+        )
+    if not starting_lineup_df.empty:
+        starting_lineup_df = starting_lineup_df.drop_duplicates(
+            subset=["game_id", "team", "number"],
+            keep="first",
+        )
 
     print(
         f"[swe pdf transform] referees={len(referees_df)}, "
         f"period_stats={len(period_stats_df)}, roster={len(roster_df)}, "
         f"player_stats={len(player_stats_df)}, goalie_stats={len(goalie_stats_df)}, "
-        f"on_ice={len(on_ice_df)}"
+        f"on_ice={len(on_ice_df)}, goals={len(goals_df)}, "
+        f"penalties={len(penalties_df)}, gk_changes={len(gk_changes_df)}, "
+        f"starting_lineup={len(starting_lineup_df)}"
     )
 
     return {
@@ -223,4 +281,8 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
         "game_player_stats": player_stats_df,
         "game_goalie_stats": goalie_stats_df,
         "game_on_ice": on_ice_df,
+        "game_goals": goals_df,
+        "game_penalties": penalties_df,
+        "game_gk_changes": gk_changes_df,
+        "game_starting_lineup": starting_lineup_df,
     }
