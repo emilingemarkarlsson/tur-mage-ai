@@ -136,7 +136,8 @@ jobs:
           LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
           LITELLM_DEFAULT_MODEL: gemini-flash
           LITELLM_MAX_INSIGHTS: "5"
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           # mage-ai pulls in duckdb 1.5.x; MotherDuck extension requires <=1.2.x.
           # Install duckdb first, then motherduck with --no-deps to prevent pip

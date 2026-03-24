@@ -114,32 +114,38 @@ def _call_litellm(prompt_context: str) -> tuple[str, str]:
         return lines[0][:120] if lines else "", raw
 
 
-def _notify_slack(stored_items: list) -> None:
-    """POST a summary of new insights to Slack via incoming webhook."""
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "").strip()
-    if not webhook_url or not stored_items:
+def _notify_telegram(stored_items: list) -> None:
+    """POST a summary of new insights to Telegram."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id or not stored_items:
         return
     lines = []
     for item in stored_items:
         z = item["zscore"]
         headline = item.get("headline") or ""
         lines.append(
-            f"• *{item['entity_name']}* ({item['team_abbr']}) — "
+            f"• <b>{item['entity_name']}</b> ({item['team_abbr']}) — "
             f"{item['insight_type']} — z={z:+.2f}"
-            + (f': "{headline}"' if headline else "")
+            + (f'\n  "{headline}"' if headline else "")
         )
-    text = f":ice_hockey_stick_and_puck: *NHL Agent — {len(stored_items)} new insight(s)*\n" + "\n".join(lines)
-    payload = json.dumps({"text": text}).encode()
+    text = f"🏒 <b>NHL Agent — {len(stored_items)} new insight(s)</b>\n\n" + "\n".join(lines)
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }).encode()
     try:
         req = urllib.request.Request(
-            webhook_url,
+            f"https://api.telegram.org/bot{token}/sendMessage",
             data=payload,
             headers={"Content-Type": "application/json"},
         )
         urllib.request.urlopen(req, timeout=10)
-        print(f"[generate_insights] Slack notification sent ({len(stored_items)} insights)")
+        print(f"[generate_insights] Telegram notification sent ({len(stored_items)} insights)")
     except Exception as e:
-        print(f"[generate_insights] Slack notification failed: {e}")
+        print(f"[generate_insights] Telegram notification failed: {e}")
 
 
 @data_exporter
@@ -192,4 +198,4 @@ def export_data(insights: list, *args, **kwargs) -> None:
 
     conn.close()
     print(f"[generate_insights] Done – stored: {stored}, skipped: {skipped}, failed: {failed}")
-    _notify_slack(newly_stored)
+    _notify_telegram(newly_stored)
