@@ -28,7 +28,8 @@ GAMES_COLUMNS = [
 ]
 
 EVENTS_COLUMNS = [
-    "game_id", "game_date", "period", "event_time", "event_type",
+    "game_id", "game_date", "season", "league",
+    "period", "event_time", "event_type",
     "team", "player_name", "player_number", "goal_type",
     "penalty_minutes", "penalty_start", "penalty_end",
     "penalty_type", "goalkeeper_action", "powerplay_number",
@@ -36,31 +37,40 @@ EVENTS_COLUMNS = [
 ]
 
 GOALKEEPERS_COLUMNS = [
-    "game_id", "game_date", "team", "name", "number",
+    "game_id", "game_date", "season", "league",
+    "team", "name", "number",
     "saves", "shots_against", "save_pct",
 ]
 
 LINEUPS_COLUMNS = [
-    "game_id", "game_date", "team", "is_home",
+    "game_id", "game_date", "season", "league",
+    "team", "is_home",
     "head_coach", "assistant_coach",
     "line_number", "position", "player_name", "player_number",
     "is_starting",
 ]
 
 PERIOD_SCORES_COLUMNS = [
-    "game_id", "game_date", "period", "home_score", "away_score",
+    "game_id", "game_date", "season", "league",
+    "period", "home_score", "away_score",
 ]
 
 REFEREES_JSON_COLUMNS = [
-    "game_id", "game_date", "name", "role",
+    "game_id", "game_date", "season", "league",
+    "name", "role",
 ]
 
 ON_ICE_JSON_COLUMNS = [
-    "game_id", "game_date", "period", "event_time", "event_type", "team_side", "player_number",
+    "game_id", "game_date", "season", "league",
+    "period", "event_time", "event_type",
+    "event_team",   # laget som äger händelsen (positiv sida = scoringlag)
+    "team_side",    # "positive" = event_team, "negative" = motståndet
+    "player_number",
 ]
 
 PLAYER_STATS_JSON_COLUMNS = [
-    "game_id", "game_date", "team", "player_id", "player_name",
+    "game_id", "game_date", "season", "league",
+    "team", "player_id", "player_name",
     "goals", "assists", "pim", "shots", "plus_minus",
 ]
 
@@ -127,7 +137,6 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
     away_saves = to_int(away_stats.get("saves"))
 
     # FIX: save_pct är cross-referens – home målvakt räddade mot bortalagets skott.
-    # home_save_pct = home_saves / away_shots  (INTE home_saves / home_shots)
     home_save_pct = round(home_saves / away_shots * 100, 2) if away_shots else None
     away_save_pct = round(away_saves / home_shots * 100, 2) if home_shots else None
 
@@ -170,7 +179,8 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
     }
 
 
-def _extract_events(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
+def _extract_events(payload: Dict[str, Any], game_id: str, game_date: str,
+                    league: str, season: str) -> List[Dict[str, Any]]:
     rows = []
     for event in payload.get("events") or []:
         if not isinstance(event, dict):
@@ -182,6 +192,8 @@ def _extract_events(payload: Dict[str, Any], game_id: str, game_date: str) -> Li
         rows.append({
             "game_id": game_id,
             "game_date": parse_date(game_date),
+            "season": season,
+            "league": league,
             "period": to_int(event.get("period")),
             "event_time": event.get("time") or "",
             "event_type": event.get("event_type") or "",
@@ -202,7 +214,8 @@ def _extract_events(payload: Dict[str, Any], game_id: str, game_date: str) -> Li
     return rows
 
 
-def _extract_goalkeepers(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
+def _extract_goalkeepers(payload: Dict[str, Any], game_id: str, game_date: str,
+                          league: str, season: str) -> List[Dict[str, Any]]:
     rows = []
     for gk in payload.get("goalkeepers") or []:
         if not isinstance(gk, dict):
@@ -210,6 +223,8 @@ def _extract_goalkeepers(payload: Dict[str, Any], game_id: str, game_date: str) 
         rows.append({
             "game_id": game_id,
             "game_date": parse_date(game_date),
+            "season": season,
+            "league": league,
             "team": gk.get("team") or "",
             "name": gk.get("name") or "",
             "number": str(gk.get("number") or ""),
@@ -220,16 +235,18 @@ def _extract_goalkeepers(payload: Dict[str, Any], game_id: str, game_date: str) 
     return rows
 
 
-def _lineup_player_row(game_id, game_date, team, is_home, head_coach, assistant_coach,
-                        line_num, position, player: Dict) -> Dict:
+def _lineup_player_row(game_id, game_date, season, league, team, is_home,
+                        head_coach, assistant_coach, line_num, position,
+                        player: Dict) -> Dict:
     """Bygg en spelrad från ett player-objekt oavsett format."""
-    # Standardisera MV → G (svensk position-förkortning)
     pos = (player.get("position") or position or "").upper()
     if pos == "MV":
         pos = "G"
     return {
         "game_id": game_id,
         "game_date": parse_date(game_date),
+        "season": season,
+        "league": league,
         "team": team,
         "is_home": is_home,
         "head_coach": head_coach,
@@ -242,20 +259,10 @@ def _lineup_player_row(game_id, game_date, team, is_home, head_coach, assistant_
     }
 
 
-def _extract_lineups(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
-    """Plattar laguppställning till en rad per spelare.
-
-    Hanterar det faktiska formatet (bekräftat via S3-sampling):
-      lines[i].forwards = [{number, name, position, starting}, ...]
-      lines[i].defense  = [{number, name, position, starting}, ...]
-      lines[i].line     = linje-nummer (int)
-
-    Hanterar också gammalt format som fallback:
-      lines[i].left_wing / center / right_wing / left_defense / right_defense
-    """
+def _extract_lineups(payload: Dict[str, Any], game_id: str, game_date: str,
+                     league: str, season: str) -> List[Dict[str, Any]]:
     rows = []
 
-    # Gammalt format: position som nyckel direkt på line-objektet
     _old_position_map = {
         "left_wing": "LW",
         "center": "C",
@@ -273,48 +280,41 @@ def _extract_lineups(payload: Dict[str, Any], game_id: str, game_date: str) -> L
         head_coach = lineup.get("head_coach") or ""
         assistant_coach = lineup.get("assistant_coach") or ""
 
-        # Målvakter (finns i båda formaten under "goalies")
         for gk in lineup.get("goalies") or []:
             if isinstance(gk, dict):
                 rows.append(_lineup_player_row(
-                    game_id, game_date, team, is_home,
+                    game_id, game_date, season, league, team, is_home,
                     head_coach, assistant_coach,
                     line_num=None, position="G", player=gk,
                 ))
 
-        # Fältspelare
         for line in lineup.get("lines") or []:
             if not isinstance(line, dict):
                 continue
-
-            # Nytt format använder "line" (int), gammalt använder "line_number"
             line_num = to_int(line.get("line") or line.get("line_number"))
 
-            # FIX: Nytt format – forwards[] + defense[]
             if "forwards" in line or "defense" in line:
                 for player in (line.get("forwards") or []) + (line.get("defense") or []):
                     if isinstance(player, dict):
                         rows.append(_lineup_player_row(
-                            game_id, game_date, team, is_home,
+                            game_id, game_date, season, league, team, is_home,
                             head_coach, assistant_coach,
                             line_num=line_num, position="", player=player,
                         ))
             else:
-                # Gammalt format – left_wing, center, right_wing, left_defense, right_defense
                 for pos_key, pos_abbr in _old_position_map.items():
                     player = line.get(pos_key)
                     if isinstance(player, dict):
                         rows.append(_lineup_player_row(
-                            game_id, game_date, team, is_home,
+                            game_id, game_date, season, league, team, is_home,
                             head_coach, assistant_coach,
                             line_num=line_num, position=pos_abbr, player=player,
                         ))
 
-        # Extra spelare
         for player in lineup.get("extra_players") or []:
             if isinstance(player, dict):
                 rows.append(_lineup_player_row(
-                    game_id, game_date, team, is_home,
+                    game_id, game_date, season, league, team, is_home,
                     head_coach, assistant_coach,
                     line_num=None, position="EXTRA", player=player,
                 ))
@@ -322,8 +322,8 @@ def _extract_lineups(payload: Dict[str, Any], game_id: str, game_date: str) -> L
     return rows
 
 
-def _extract_period_scores(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
-    """Extrahera per-period resultat från period_scores[]."""
+def _extract_period_scores(payload: Dict[str, Any], game_id: str, game_date: str,
+                            league: str, season: str) -> List[Dict[str, Any]]:
     rows = []
     for ps in payload.get("period_scores") or []:
         if not isinstance(ps, dict):
@@ -331,6 +331,8 @@ def _extract_period_scores(payload: Dict[str, Any], game_id: str, game_date: str
         rows.append({
             "game_id": game_id,
             "game_date": parse_date(game_date),
+            "season": season,
+            "league": league,
             "period": str(ps.get("period", "")),
             "home_score": to_int(ps.get("home")),
             "away_score": to_int(ps.get("away")),
@@ -338,8 +340,8 @@ def _extract_period_scores(payload: Dict[str, Any], game_id: str, game_date: str
     return rows
 
 
-def _extract_referees_json(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
-    """Extrahera domare och linjedömmare från JSON."""
+def _extract_referees_json(payload: Dict[str, Any], game_id: str, game_date: str,
+                            league: str, season: str) -> List[Dict[str, Any]]:
     rows = []
     for ref in payload.get("referees") or []:
         if not isinstance(ref, dict):
@@ -347,6 +349,8 @@ def _extract_referees_json(payload: Dict[str, Any], game_id: str, game_date: str
         rows.append({
             "game_id": game_id,
             "game_date": parse_date(game_date),
+            "season": season,
+            "league": league,
             "name": ref.get("name") or "",
             "role": ref.get("role") or "Referee",
         })
@@ -356,14 +360,20 @@ def _extract_referees_json(payload: Dict[str, Any], game_id: str, game_date: str
         rows.append({
             "game_id": game_id,
             "game_date": parse_date(game_date),
+            "season": season,
+            "league": league,
             "name": linesman.get("name") or "",
             "role": "Linesman",
         })
     return rows
 
 
-def _extract_on_ice_json(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
-    """Extrahera on-ice spelare vid händelser (positive/negative_participants)."""
+def _extract_on_ice_json(payload: Dict[str, Any], game_id: str, game_date: str,
+                          league: str, season: str) -> List[Dict[str, Any]]:
+    """Extrahera on-ice spelare vid händelser.
+    event_team = laget som äger händelsen (positiv sida).
+    team_side = 'positive' (event_team) eller 'negative' (motståndet).
+    """
     rows = []
     for event in payload.get("events") or []:
         if not isinstance(event, dict):
@@ -376,23 +386,27 @@ def _extract_on_ice_json(payload: Dict[str, Any], game_id: str, game_date: str) 
         event_type = event.get("event_type") or ""
         period = to_int(event.get("period"))
         event_time = event.get("time") or ""
+        event_team = event.get("team") or ""  # laget som äger händelsen
 
         for side, participants in (("positive", pos_participants), ("negative", neg_participants)):
             for player_number in participants:
                 rows.append({
                     "game_id": game_id,
                     "game_date": parse_date(game_date),
+                    "season": season,
+                    "league": league,
                     "period": period,
                     "event_time": event_time,
                     "event_type": event_type,
+                    "event_team": event_team,
                     "team_side": side,
                     "player_number": str(player_number),
                 })
     return rows
 
 
-def _extract_player_stats_json(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
-    """Extrahera individuell spelarstatistik per match från player_stats[]."""
+def _extract_player_stats_json(payload: Dict[str, Any], game_id: str, game_date: str,
+                                league: str, season: str) -> List[Dict[str, Any]]:
     rows = []
     for ps in payload.get("player_stats") or []:
         if not isinstance(ps, dict):
@@ -400,6 +414,8 @@ def _extract_player_stats_json(payload: Dict[str, Any], game_id: str, game_date:
         rows.append({
             "game_id": game_id,
             "game_date": parse_date(game_date),
+            "season": season,
+            "league": league,
             "team": ps.get("team") or "",
             "player_id": str(ps.get("player_id") or ""),
             "player_name": ps.get("player_name") or "",
@@ -439,14 +455,17 @@ def transform_swe_games(payload: Dict[str, Any], *args, **kwargs):
         game_id = str(item.get("game_id", ""))
         data = item.get("payload") or {}
 
+        league = _clean_str(data.get("league"))
+        season = _derive_season(game_date)
+
         game_rows.append(_extract_game_row(data, game_date))
-        event_rows.extend(_extract_events(data, game_id, game_date))
-        goalkeeper_rows.extend(_extract_goalkeepers(data, game_id, game_date))
-        lineup_rows.extend(_extract_lineups(data, game_id, game_date))
-        period_score_rows.extend(_extract_period_scores(data, game_id, game_date))
-        referee_rows.extend(_extract_referees_json(data, game_id, game_date))
-        on_ice_rows.extend(_extract_on_ice_json(data, game_id, game_date))
-        player_stat_rows.extend(_extract_player_stats_json(data, game_id, game_date))
+        event_rows.extend(_extract_events(data, game_id, game_date, league, season))
+        goalkeeper_rows.extend(_extract_goalkeepers(data, game_id, game_date, league, season))
+        lineup_rows.extend(_extract_lineups(data, game_id, game_date, league, season))
+        period_score_rows.extend(_extract_period_scores(data, game_id, game_date, league, season))
+        referee_rows.extend(_extract_referees_json(data, game_id, game_date, league, season))
+        on_ice_rows.extend(_extract_on_ice_json(data, game_id, game_date, league, season))
+        player_stat_rows.extend(_extract_player_stats_json(data, game_id, game_date, league, season))
 
     games_df = _df(game_rows, GAMES_COLUMNS)
     events_df = _df(event_rows, EVENTS_COLUMNS)

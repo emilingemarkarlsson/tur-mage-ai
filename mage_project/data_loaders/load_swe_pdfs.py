@@ -110,16 +110,19 @@ def _list_game_ids_with_pdfs(client, bucket: str) -> List[str]:
     return game_ids
 
 
-def _get_game_date_from_details(client, bucket: str, game_id: str) -> str:
-    """Försök hitta game_date från raw/game_details/{game_id}.json."""
+def _get_game_meta_from_details(client, bucket: str, game_id: str) -> Dict[str, str]:
+    """Hämta game_date och league från raw/game_details/{game_id}.json."""
     key = f"raw/game_details/{game_id}.json"
     try:
         import json
         data = client.get_object(Bucket=bucket, Key=key)["Body"].read()
         payload = json.loads(data)
-        return payload.get("game_date") or payload.get("date") or ""
+        return {
+            "game_date": payload.get("game_date") or payload.get("date") or "",
+            "league": payload.get("league") or "",
+        }
     except Exception:
-        return ""
+        return {"game_date": "", "league": ""}
 
 
 def _list_pdfs_for_game(client, bucket: str, game_id: str) -> Dict[str, str]:
@@ -216,8 +219,8 @@ def load_swe_pdfs(*args, **kwargs):
             if not pdfs:
                 continue
 
-            # Hämta game_date från game_details om möjligt
-            game_date = _get_game_date_from_details(client, bucket, game_id)
+            # Hämta game_date och league från game_details om möjligt
+            meta = _get_game_meta_from_details(client, bucket, game_id)
 
             pdf_data = {}
             for pdf_type, key in pdfs.items():
@@ -228,7 +231,8 @@ def load_swe_pdfs(*args, **kwargs):
             if pdf_data:
                 games_batch.append({
                     "game_id": game_id,
-                    "game_date": game_date,
+                    "game_date": meta["game_date"],
+                    "league": meta["league"],
                     "pdfs": pdf_data,
                 })
 

@@ -1,7 +1,7 @@
 """
 Transformera Swehockey PDF-data till DataFrames.
 
-Input: {"games": [{game_id, game_date, pdfs: {pdf_type: bytes}}]}
+Input: {"games": [{game_id, game_date, league, pdfs: {pdf_type: bytes}}]}
 Output: {
   "game_referees": DataFrame,
   "game_period_stats": DataFrame,
@@ -9,6 +9,11 @@ Output: {
   "game_player_stats": DataFrame,
   "game_goalie_stats": DataFrame,
   "game_on_ice": DataFrame,
+  "game_goals": DataFrame,
+  "game_penalties": DataFrame,
+  "game_gk_changes": DataFrame,
+  "game_starting_lineup": DataFrame,
+  "game_spectators": DataFrame,
 }
 """
 import sys
@@ -32,62 +37,67 @@ if "transformer" not in globals():
 # ---------------------------------------------------------------------------
 
 REFEREES_COLUMNS = [
-    "game_id", "game_date", "name", "role",
+    "game_id", "game_date", "season", "league", "name", "role",
 ]
 
 PERIOD_STATS_COLUMNS = [
-    "game_id", "game_date", "team", "period",
+    "game_id", "game_date", "season", "league", "team", "period",
     "goals", "shots", "saves", "svs_pct", "pim",
     "tpp_sec", "adv", "pp_pct", "tsh_sec", "dvg", "sh_pct",
 ]
 
 ROSTER_COLUMNS = [
-    "game_id", "game_date", "team", "position", "number", "name",
+    "game_id", "game_date", "season", "league", "team", "position", "number", "name",
     "birthdate", "captain_role", "line_label", "is_coach", "coach_role",
 ]
 
 PLAYER_STATS_COLUMNS = [
-    "game_id", "game_date", "team", "number", "name", "position",
+    "game_id", "game_date", "season", "league", "team", "number", "name", "position",
     "goals", "assists", "points", "plus_minus", "pim", "sog",
     "fo_won", "fo_lost", "fo_pct", "hits", "blocks", "shifts", "toi",
     "source",
 ]
 
 GOALIE_STATS_COLUMNS = [
-    "game_id", "game_date", "team", "number", "name",
+    "game_id", "game_date", "season", "league", "team", "number", "name",
     "sog", "ga", "saves", "svs_pct", "toi", "gaa",
     "pp_svs", "pp_shots_against",
     "source",
 ]
 
 GOALS_COLUMNS = [
-    "game_id", "game_date", "period", "event_time", "team_abbr", "score", "goal_type",
+    "game_id", "game_date", "season", "league",
+    "period", "event_time", "team_abbr", "score", "goal_type",
     "scorer_number", "scorer_name",
     "assist1_number", "assist1_name",
     "assist2_number", "assist2_name",
 ]
 
 PENALTIES_COLUMNS = [
-    "game_id", "game_date", "period", "event_time", "team_abbr",
+    "game_id", "game_date", "season", "league",
+    "period", "event_time", "team_abbr",
     "minutes", "player_number", "player_name", "infraction",
 ]
 
 GK_CHANGES_COLUMNS = [
-    "game_id", "game_date", "period", "event_time", "team_abbr",
+    "game_id", "game_date", "season", "league",
+    "period", "event_time", "team_abbr",
     "direction", "player_number", "player_name",
 ]
 
 STARTING_LINEUP_COLUMNS = [
-    "game_id", "game_date", "team", "line_number", "number", "name", "position",
+    "game_id", "game_date", "season", "league",
+    "team", "line_number", "number", "name", "position",
 ]
 
 ON_ICE_COLUMNS = [
-    "game_id", "game_date", "period", "event_time", "score",
+    "game_id", "game_date", "season", "league",
+    "period", "event_time", "score",
     "event_type", "team_abbr", "side", "player_number",
 ]
 
 SPECTATORS_COLUMNS = [
-    "game_id", "game_date", "spectators",
+    "game_id", "game_date", "season", "league", "spectators",
 ]
 
 
@@ -98,6 +108,14 @@ def _df(rows: List[Dict], columns: List[str]) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
     return df[columns] if not df.empty else pd.DataFrame(columns=columns)
+
+
+def _tag(rows: List[Dict], season: str, league: str) -> List[Dict]:
+    """Sätt season och league på alla rader (in-place, returnerar rows)."""
+    for r in rows:
+        r["season"] = season
+        r["league"] = league
+    return rows
 
 
 def _merge_player_stats(from_official: List[Dict], from_media: List[Dict]) -> List[Dict]:
@@ -112,8 +130,6 @@ def _merge_player_stats(from_official: List[Dict], from_media: List[Dict]) -> Li
     if not from_media:
         return from_official
 
-    # Media har bättre data (fler kolumner) – returnera media
-    # Men om media saknar team-info, fyll från official
     media_has_teams = any(r.get("team") for r in from_media)
     official_has_teams = any(r.get("team") for r in from_official)
     if not media_has_teams and official_has_teams:
@@ -143,6 +159,8 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
     for item in payload.get("games") or []:
         game_id = str(item.get("game_id", ""))
         game_date = str(item.get("game_date", ""))
+        league = str(item.get("league") or "")
+        season = game_date[:4] if len(game_date) >= 4 else ""
         pdfs = item.get("pdfs") or {}
 
         if not game_id:
@@ -153,22 +171,17 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
             result = parse_pdf("Official_Game_Report", pdfs["Official_Game_Report"], game_id, game_date)
 
             # Referees (deduplicera per match)
-            for ref in result.get("referees", []):
+            for ref in _tag(result.get("referees", []), season, league):
                 key = (game_id, ref.get("name", ""))
                 if key not in seen_referees:
                     seen_referees.add(key)
                     all_referees.append(ref)
 
-            # Period stats
-            all_period_stats.extend(result.get("period_stats", []))
-
-            # On-ice events
-            all_on_ice.extend(result.get("on_ice_events", []))
-
-            # Händelsetabeller
-            all_goals.extend(result.get("goals", []))
-            all_penalties.extend(result.get("penalties", []))
-            all_gk_changes.extend(result.get("gk_changes", []))
+            all_period_stats.extend(_tag(result.get("period_stats", []), season, league))
+            all_on_ice.extend(_tag(result.get("on_ice_events", []), season, league))
+            all_goals.extend(_tag(result.get("goals", []), season, league))
+            all_penalties.extend(_tag(result.get("penalties", []), season, league))
+            all_gk_changes.extend(_tag(result.get("gk_changes", []), season, league))
 
             # Åskådarantal
             spectators = result.get("spectators")
@@ -176,13 +189,15 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
                 all_spectators.append({
                     "game_id": game_id,
                     "game_date": game_date,
+                    "season": season,
+                    "league": league,
                     "spectators": spectators,
                 })
 
         # --- Official_Team_Roster ---
         if "Official_Team_Roster" in pdfs:
             result = parse_pdf("Official_Team_Roster", pdfs["Official_Team_Roster"], game_id, game_date)
-            all_roster.extend(result.get("roster", []))
+            all_roster.extend(_tag(result.get("roster", []), season, league))
 
         # --- Player stats: föredra Media_Game_Summary, fallback Player_Summary ---
         player_rows_official: List[Dict] = []
@@ -192,24 +207,24 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
 
         if "Player_Summary" in pdfs:
             result = parse_pdf("Player_Summary", pdfs["Player_Summary"], game_id, game_date)
-            player_rows_official = result.get("player_stats", [])
-            goalie_rows_official = result.get("goalie_stats", [])
+            player_rows_official = _tag(result.get("player_stats", []), season, league)
+            goalie_rows_official = _tag(result.get("goalie_stats", []), season, league)
 
         if "Media_Game_Summary" in pdfs:
             result = parse_pdf("Media_Game_Summary", pdfs["Media_Game_Summary"], game_id, game_date)
-            player_rows_media = result.get("player_stats", [])
-            goalie_rows_media = result.get("goalie_stats", [])
+            player_rows_media = _tag(result.get("player_stats", []), season, league)
+            goalie_rows_media = _tag(result.get("goalie_stats", []), season, league)
 
         # Official_Line_Up: referees backup + starting lineup
         if "Official_Line_Up" in pdfs:
             result = parse_pdf("Official_Line_Up", pdfs["Official_Line_Up"], game_id, game_date)
             if not any(r["game_id"] == game_id for r in all_referees):
-                for ref in result.get("referees", []):
+                for ref in _tag(result.get("referees", []), season, league):
                     key = (game_id, ref.get("name", ""))
                     if key not in seen_referees:
                         seen_referees.add(key)
                         all_referees.append(ref)
-            all_starting_lineup.extend(result.get("starting_lineup", []))
+            all_starting_lineup.extend(_tag(result.get("starting_lineup", []), season, league))
 
         merged_players = _merge_player_stats(player_rows_official, player_rows_media)
         all_player_stats.extend(merged_players)
