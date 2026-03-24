@@ -447,6 +447,231 @@ def refresh_duckdb_views(*args, **kwargs):
     except Exception as e:
         print(f"[refresh_duckdb_views] team_corsi: {e}")
 
+    # -------------------------------------------------------------------------
+    # Timeline views: kumulativa stats per spelare/lag per datum inom säsongen.
+    # Används för att följa prestation över tid – inte bara snapshot-statistik.
+    # -------------------------------------------------------------------------
+
+    # player_season_timeline – kumulativa + rolling stats per skater per match-datum.
+    # JOIN med games för att få season (saknas i game_players-parquet).
+    try:
+        conn.execute("""
+            CREATE OR REPLACE VIEW player_season_timeline AS
+            WITH base AS (
+                SELECT
+                    pg.player_id,
+                    pg.player_first_name,
+                    pg.player_last_name,
+                    pg.game_id,
+                    pg.game_date,
+                    g.season,
+                    pg.team_abbr,
+                    pg.position,
+                    pg.is_home,
+                    COALESCE(pg.goals, 0)            AS goals,
+                    COALESCE(pg.assists, 0)          AS assists,
+                    COALESCE(pg.points, 0)           AS points,
+                    COALESCE(pg.shots, 0)            AS shots,
+                    COALESCE(pg.hits, 0)             AS hits,
+                    COALESCE(pg.plus_minus, 0)       AS plus_minus,
+                    COALESCE(pg.pim, 0)              AS pim,
+                    COALESCE(pg.toi_seconds, 0)      AS toi_seconds,
+                    COALESCE(pg.power_play_goals, 0) AS pp_goals,
+                    COALESCE(pg.blocked_shots, 0)    AS blocked_shots
+                FROM player_game_stats pg
+                JOIN games g ON g.game_id = pg.game_id
+                WHERE pg.position NOT IN ('G')
+                  AND COALESCE(pg.toi_seconds, 0) > 0
+            ),
+            cumulative AS (
+                SELECT *,
+                    -- Kumulativa summor inom säsongen
+                    SUM(goals)         OVER wseason AS goals_cum,
+                    SUM(assists)       OVER wseason AS assists_cum,
+                    SUM(points)        OVER wseason AS points_cum,
+                    SUM(shots)         OVER wseason AS shots_cum,
+                    SUM(hits)          OVER wseason AS hits_cum,
+                    SUM(plus_minus)    OVER wseason AS plus_minus_cum,
+                    SUM(pim)           OVER wseason AS pim_cum,
+                    SUM(toi_seconds)   OVER wseason AS toi_seconds_cum,
+                    SUM(pp_goals)      OVER wseason AS pp_goals_cum,
+                    SUM(blocked_shots) OVER wseason AS blocked_shots_cum,
+                    COUNT(*)           OVER wseason AS gp_cum,
+                    -- Rolling 5-matchersnitt
+                    ROUND(AVG(points) OVER w5,  3) AS pts_avg_5g,
+                    ROUND(AVG(goals)  OVER w5,  3) AS goals_avg_5g,
+                    ROUND(AVG(shots)  OVER w5,  3) AS shots_avg_5g,
+                    -- Rolling 10-matchersnitt
+                    ROUND(AVG(points) OVER w10, 3) AS pts_avg_10g,
+                    ROUND(AVG(goals)  OVER w10, 3) AS goals_avg_10g,
+                    ROUND(AVG(shots)  OVER w10, 3) AS shots_avg_10g
+                FROM base
+                WINDOW
+                    wseason AS (PARTITION BY player_id, season
+                                ORDER BY game_date
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+                    w5      AS (PARTITION BY player_id
+                                ORDER BY game_date
+                                ROWS BETWEEN 4 PRECEDING AND CURRENT ROW),
+                    w10     AS (PARTITION BY player_id
+                                ORDER BY game_date
+                                ROWS BETWEEN 9 PRECEDING AND CURRENT ROW)
+            )
+            SELECT
+                *,
+                -- Points per game (kumulativt)
+                ROUND(CAST(points_cum AS DOUBLE) / NULLIF(gp_cum, 0), 3) AS points_per_game_cum,
+                -- Poängranking bland alla skaters på detta datum i denna säsong
+                RANK() OVER (
+                    PARTITION BY season, game_date
+                    ORDER BY points_cum DESC
+                ) AS season_points_rank
+            FROM cumulative
+        """)
+        print("[refresh_duckdb_views] player_season_timeline: OK")
+    except Exception as e:
+        print(f"[refresh_duckdb_views] player_season_timeline: {e}")
+
+    # goalie_season_timeline – kumulativa + rolling stats per målvakt per datum.
+    # JOIN med games för att få season (saknas i game_players-parquet).
+    try:
+        conn.execute("""
+            CREATE OR REPLACE VIEW goalie_season_timeline AS
+            WITH base AS (
+                SELECT
+                    pg.player_id,
+                    pg.player_first_name,
+                    pg.player_last_name,
+                    pg.game_id,
+                    pg.game_date,
+                    g.season,
+                    pg.team_abbr,
+                    pg.is_home,
+                    COALESCE(pg.saves, 0)         AS saves,
+                    COALESCE(pg.shots_against, 0) AS shots_against,
+                    COALESCE(pg.goals_against, 0) AS goals_against,
+                    COALESCE(pg.save_pct, 0)      AS save_pct,
+                    COALESCE(pg.toi_seconds, 0)   AS toi_seconds
+                FROM player_game_stats pg
+                JOIN games g ON g.game_id = pg.game_id
+                WHERE pg.position = 'G'
+                  AND COALESCE(pg.toi_seconds, 0) > 600
+            ),
+            cumulative AS (
+                SELECT *,
+                    SUM(saves)         OVER wseason AS saves_cum,
+                    SUM(shots_against) OVER wseason AS shots_against_cum,
+                    SUM(goals_against) OVER wseason AS goals_against_cum,
+                    SUM(toi_seconds)   OVER wseason AS toi_seconds_cum,
+                    COUNT(*)           OVER wseason AS gp_cum,
+                    -- Kumulativ SV% (räknat från raw-siffror, inte snitt av snitt)
+                    ROUND(
+                        CAST(SUM(saves) OVER wseason AS DOUBLE)
+                        / NULLIF(SUM(shots_against) OVER wseason, 0),
+                    4) AS save_pct_cum,
+                    ROUND(AVG(save_pct) OVER w5,  4) AS sv_pct_avg_5g,
+                    ROUND(AVG(save_pct) OVER w10, 4) AS sv_pct_avg_10g
+                FROM base
+                WINDOW
+                    wseason AS (PARTITION BY player_id, season
+                                ORDER BY game_date
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+                    w5      AS (PARTITION BY player_id
+                                ORDER BY game_date
+                                ROWS BETWEEN 4 PRECEDING AND CURRENT ROW),
+                    w10     AS (PARTITION BY player_id
+                                ORDER BY game_date
+                                ROWS BETWEEN 9 PRECEDING AND CURRENT ROW)
+            )
+            SELECT
+                *,
+                -- GAA kumulativt (mål insläppta per 60 min)
+                ROUND(
+                    CAST(goals_against_cum AS DOUBLE) * 3600.0
+                    / NULLIF(toi_seconds_cum, 0),
+                4) AS gaa_cum,
+                RANK() OVER (
+                    PARTITION BY season, game_date
+                    ORDER BY save_pct_cum DESC
+                ) AS season_sv_pct_rank
+            FROM cumulative
+        """)
+        print("[refresh_duckdb_views] goalie_season_timeline: OK")
+    except Exception as e:
+        print(f"[refresh_duckdb_views] goalie_season_timeline: {e}")
+
+    # team_season_timeline – kumulativa tabellpoäng + statistik per lag per datum.
+    # team_game_stats-kolumner är VARCHAR i MotherDuck → TRY_CAST defensivt.
+    try:
+        conn.execute("""
+            CREATE OR REPLACE VIEW team_season_timeline AS
+            WITH base AS (
+                SELECT
+                    team_abbr,
+                    game_id,
+                    game_date,
+                    CAST(season AS VARCHAR)                            AS season,
+                    is_home,
+                    opponent_abbr,
+                    COALESCE(TRY_CAST(team_points   AS INTEGER), 0)   AS team_points,
+                    COALESCE(TRY_CAST(goals_for     AS INTEGER), 0)   AS goals_for,
+                    COALESCE(TRY_CAST(goals_against AS INTEGER), 0)   AS goals_against,
+                    COALESCE(TRY_CAST(sog           AS INTEGER), 0)   AS shots,
+                    COALESCE(TRY_CAST(pp_goals      AS INTEGER), 0)   AS pp_goals,
+                    COALESCE(TRY_CAST(pp_opportunities AS INTEGER), 0) AS pp_opps,
+                    CASE WHEN COALESCE(TRY_CAST(team_points AS INTEGER), 0) = 2 THEN 1 ELSE 0 END AS win,
+                    CASE WHEN COALESCE(TRY_CAST(team_points AS INTEGER), 0) = 1 THEN 1 ELSE 0 END AS otl,
+                    CASE WHEN COALESCE(TRY_CAST(team_points AS INTEGER), 0) = 0 THEN 1 ELSE 0 END AS loss
+                FROM team_game_stats
+                WHERE TRY_CAST(game_type AS INTEGER) = 2
+            ),
+            cumulative AS (
+                SELECT *,
+                    SUM(team_points)   OVER wseason AS points_cum,
+                    SUM(goals_for)     OVER wseason AS gf_cum,
+                    SUM(goals_against) OVER wseason AS ga_cum,
+                    SUM(shots)         OVER wseason AS shots_cum,
+                    SUM(pp_goals)      OVER wseason AS pp_goals_cum,
+                    SUM(pp_opps)       OVER wseason AS pp_opps_cum,
+                    SUM(win)           OVER wseason AS wins_cum,
+                    SUM(otl)           OVER wseason AS otl_cum,
+                    SUM(loss)          OVER wseason AS losses_cum,
+                    COUNT(*)           OVER wseason AS gp_cum,
+                    ROUND(AVG(team_points)   OVER w5,  3) AS pts_avg_5g,
+                    ROUND(AVG(goals_for)     OVER w5,  3) AS gf_avg_5g,
+                    ROUND(AVG(goals_against) OVER w5,  3) AS ga_avg_5g,
+                    ROUND(AVG(team_points)   OVER w10, 3) AS pts_avg_10g,
+                    ROUND(AVG(goals_for)     OVER w10, 3) AS gf_avg_10g,
+                    ROUND(AVG(goals_against) OVER w10, 3) AS ga_avg_10g,
+                    SUM(win) OVER w5                      AS wins_last_5
+                FROM base
+                WINDOW
+                    wseason AS (PARTITION BY team_abbr, season
+                                ORDER BY game_date
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+                    w5      AS (PARTITION BY team_abbr
+                                ORDER BY game_date
+                                ROWS BETWEEN 4 PRECEDING AND CURRENT ROW),
+                    w10     AS (PARTITION BY team_abbr
+                                ORDER BY game_date
+                                ROWS BETWEEN 9 PRECEDING AND CURRENT ROW)
+            )
+            SELECT
+                *,
+                gf_cum - ga_cum AS goal_diff_cum,
+                ROUND(
+                    CAST(pp_goals_cum AS DOUBLE) / NULLIF(pp_opps_cum, 0),
+                4) AS pp_pct_cum,
+                RANK() OVER (
+                    PARTITION BY season, game_date
+                    ORDER BY points_cum DESC, (gf_cum - ga_cum) DESC
+                ) AS season_rank
+            FROM cumulative
+        """)
+        print("[refresh_duckdb_views] team_season_timeline: OK")
+    except Exception as e:
+        print(f"[refresh_duckdb_views] team_season_timeline: {e}")
+
     # Synka till MotherDuck (måste ske efter conn.close så filen inte är låst)
     conn.close()
     _sync_to_motherduck(db_path)

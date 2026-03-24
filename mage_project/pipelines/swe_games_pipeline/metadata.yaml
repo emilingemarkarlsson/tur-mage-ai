@@ -1,0 +1,38 @@
+blocks:
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - transform_swe_games
+  name: load swe games
+  status: updated
+  type: data_loader
+  upstream_blocks: []
+  uuid: load_swe_games
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - export_swe_games_parquet
+  name: transform swe games
+  status: updated
+  type: transformer
+  upstream_blocks:
+  - load_swe_games
+  uuid: transform_swe_games
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - sync_swe_to_motherduck
+  name: export swe games parquet
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - transform_swe_games
+  uuid: export_swe_games_parquet
+- all_upstream_blocks_executed: true
+  downstream_blocks: []
+  name: sync swe to motherduck
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - export_swe_games_parquet
+  uuid: sync_swe_to_motherduck
+name: swe games pipeline
+type: python
+uuid: swe_games_pipeline

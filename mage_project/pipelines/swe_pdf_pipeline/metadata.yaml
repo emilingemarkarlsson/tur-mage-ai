@@ -1,0 +1,71 @@
+blocks:
+- all_upstream_blocks_executed: true
+  color: null
+  configuration: {}
+  downstream_blocks:
+  - transform_swe_pdfs
+  executor_config: null
+  executor_type: local_python
+  has_callback: false
+  language: python
+  name: load_swe_pdfs
+  retry_config: null
+  status: executed
+  timeout: null
+  type: data_loader
+  upstream_blocks: []
+  uuid: load_swe_pdfs
+- all_upstream_blocks_executed: true
+  color: null
+  configuration: {}
+  downstream_blocks:
+  - export_swe_pdf_parquet
+  executor_config: null
+  executor_type: local_python
+  has_callback: false
+  language: python
+  name: transform_swe_pdfs
+  retry_config: null
+  status: executed
+  timeout: null
+  type: transformer
+  upstream_blocks:
+  - load_swe_pdfs
+  uuid: transform_swe_pdfs
+- all_upstream_blocks_executed: true
+  color: null
+  configuration: {}
+  downstream_blocks:
+  - sync_swe_to_motherduck
+  executor_config: null
+  executor_type: local_python
+  has_callback: false
+  language: python
+  name: export_swe_pdf_parquet
+  retry_config: null
+  status: executed
+  timeout: null
+  type: data_exporter
+  upstream_blocks:
+  - transform_swe_pdfs
+  uuid: export_swe_pdf_parquet
+- all_upstream_blocks_executed: true
+  color: null
+  configuration: {}
+  downstream_blocks: []
+  executor_config: null
+  executor_type: local_python
+  has_callback: false
+  language: python
+  name: sync_swe_to_motherduck
+  retry_config: null
+  status: executed
+  timeout: null
+  type: data_exporter
+  upstream_blocks:
+  - export_swe_pdf_parquet
+  uuid: sync_swe_to_motherduck
+description: Extraherar data från Swehockey PDF-rapporter (referees, period stats, roster, player stats, on-ice events) och synkar till MotherDuck.
+name: swe_pdf_pipeline
+tags: []
+type: python
