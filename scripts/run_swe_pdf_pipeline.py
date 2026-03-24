@@ -150,14 +150,17 @@ def _list_pdfs(client, bucket: str, game_id: str) -> Dict[str, str]:
     return result
 
 
-def _get_game_date(client, bucket: str, game_id: str) -> str:
+def _get_game_meta(client, bucket: str, game_id: str) -> dict:
     key = f"raw/game_details/{game_id}.json"
     try:
         data = client.get_object(Bucket=bucket, Key=key)["Body"].read()
         payload = json.loads(data)
-        return payload.get("game_date") or payload.get("date") or ""
+        return {
+            "game_date": payload.get("game_date") or payload.get("date") or "",
+            "league": payload.get("league") or "",
+        }
     except Exception:
-        return ""
+        return {"game_date": "", "league": ""}
 
 
 def _download(client, bucket: str, key: str) -> Optional[bytes]:
@@ -267,7 +270,7 @@ def main():
             pdfs_map = _list_pdfs(client, bucket, game_id)
             if not pdfs_map:
                 continue
-            game_date = _get_game_date(client, bucket, game_id)
+            meta = _get_game_meta(client, bucket, game_id)
             pdf_data = {}
             for pdf_type, key in pdfs_map.items():
                 raw = _download(client, bucket, key)
@@ -277,7 +280,8 @@ def main():
             if pdf_data:
                 games_batch.append({
                     "game_id": game_id,
-                    "game_date": game_date,
+                    "game_date": meta["game_date"],
+                    "league": meta["league"],
                     "pdfs": pdf_data,
                 })
 
