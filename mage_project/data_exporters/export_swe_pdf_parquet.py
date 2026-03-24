@@ -77,6 +77,7 @@ def export_swe_pdf_parquet(data: dict, *args, **kwargs):
         "game_penalties":       data.get("game_penalties"),
         "game_gk_changes":      data.get("game_gk_changes"),
         "game_starting_lineup": data.get("game_starting_lineup"),
+        "game_spectators":      data.get("game_spectators"),
     }
 
     total_rows = 0

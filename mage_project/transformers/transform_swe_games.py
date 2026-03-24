@@ -22,13 +22,16 @@ GAMES_COLUMNS = [
     "home_points", "away_points", "venue", "time",
     "home_shots", "away_shots", "home_saves", "away_saves",
     "home_save_pct", "away_save_pct", "home_pim", "away_pim",
-    "periods", "scraped_at",
+    "periods", "went_ot", "went_so",
+    "home_coach", "away_coach",
+    "scraped_at",
 ]
 
 EVENTS_COLUMNS = [
     "game_id", "game_date", "period", "event_time", "event_type",
     "team", "player_name", "player_number", "goal_type",
     "penalty_minutes", "penalty_start", "penalty_end",
+    "penalty_type", "goalkeeper_action", "powerplay_number",
     "score_home", "score_away", "assists",
 ]
 
@@ -42,6 +45,23 @@ LINEUPS_COLUMNS = [
     "head_coach", "assistant_coach",
     "line_number", "position", "player_name", "player_number",
     "is_starting",
+]
+
+PERIOD_SCORES_COLUMNS = [
+    "game_id", "game_date", "period", "home_score", "away_score",
+]
+
+REFEREES_JSON_COLUMNS = [
+    "game_id", "game_date", "name", "role",
+]
+
+ON_ICE_JSON_COLUMNS = [
+    "game_id", "game_date", "period", "event_time", "event_type", "team_side", "player_number",
+]
+
+PLAYER_STATS_JSON_COLUMNS = [
+    "game_id", "game_date", "team", "player_id", "player_name",
+    "goals", "assists", "pim", "shots", "plus_minus",
 ]
 
 
@@ -83,6 +103,11 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
     regulation_periods = [p for p in periods if to_int(p.get("period")) in (1, 2, 3)]
     went_to_ot = len(periods) > len(regulation_periods)
 
+    # OT och SO-flaggor
+    period_labels = [str(p.get("period", "")).upper() for p in periods]
+    went_so = any(lbl in ("SO", "SHOOTOUT") for lbl in period_labels)
+    went_ot = went_to_ot and not went_so
+
     if home_score is not None and away_score is not None:
         if home_score > away_score:
             home_pts, away_pts = 2, (1 if went_to_ot else 0)
@@ -105,6 +130,12 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
     # home_save_pct = home_saves / away_shots  (INTE home_saves / home_shots)
     home_save_pct = round(home_saves / away_shots * 100, 2) if away_shots else None
     away_save_pct = round(away_saves / home_shots * 100, 2) if home_shots else None
+
+    # Tränare från laguppställning
+    home_lineup = payload.get("home_team_lineup") or {}
+    away_lineup = payload.get("away_team_lineup") or {}
+    home_coach = _clean_str(home_lineup.get("head_coach") or "")
+    away_coach = _clean_str(away_lineup.get("head_coach") or "")
 
     scraped_at = (payload.get("metadata") or {}).get("scraped_at") or ""
 
@@ -131,6 +162,10 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
         "home_pim": to_int(home_stats.get("penalty_minutes")),
         "away_pim": to_int(away_stats.get("penalty_minutes")),
         "periods": len(periods),
+        "went_ot": went_ot,
+        "went_so": went_so,
+        "home_coach": home_coach,
+        "away_coach": away_coach,
         "scraped_at": scraped_at[:26] if scraped_at else "",
     }
 
@@ -157,6 +192,9 @@ def _extract_events(payload: Dict[str, Any], game_id: str, game_date: str) -> Li
             "penalty_minutes": to_int(event.get("penalty_minutes")),
             "penalty_start": event.get("penalty_start") or "",
             "penalty_end": event.get("penalty_end") or "",
+            "penalty_type": event.get("penalty_type") or "",
+            "goalkeeper_action": event.get("goalkeeper_action") or "",
+            "powerplay_number": to_int(event.get("powerplay_number")),
             "score_home": to_int(event.get("score_home")),
             "score_away": to_int(event.get("score_away")),
             "assists": assists_json,
@@ -235,12 +273,6 @@ def _extract_lineups(payload: Dict[str, Any], game_id: str, game_date: str) -> L
         head_coach = lineup.get("head_coach") or ""
         assistant_coach = lineup.get("assistant_coach") or ""
 
-        base = dict(
-            game_id=game_id, game_date=parse_date(game_date),
-            team=team, is_home=is_home,
-            head_coach=head_coach, assistant_coach=assistant_coach,
-        )
-
         # Målvakter (finns i båda formaten under "goalies")
         for gk in lineup.get("goalies") or []:
             if isinstance(gk, dict):
@@ -290,6 +322,96 @@ def _extract_lineups(payload: Dict[str, Any], game_id: str, game_date: str) -> L
     return rows
 
 
+def _extract_period_scores(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
+    """Extrahera per-period resultat från period_scores[]."""
+    rows = []
+    for ps in payload.get("period_scores") or []:
+        if not isinstance(ps, dict):
+            continue
+        rows.append({
+            "game_id": game_id,
+            "game_date": parse_date(game_date),
+            "period": str(ps.get("period", "")),
+            "home_score": to_int(ps.get("home")),
+            "away_score": to_int(ps.get("away")),
+        })
+    return rows
+
+
+def _extract_referees_json(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
+    """Extrahera domare och linjedömmare från JSON."""
+    rows = []
+    for ref in payload.get("referees") or []:
+        if not isinstance(ref, dict):
+            continue
+        rows.append({
+            "game_id": game_id,
+            "game_date": parse_date(game_date),
+            "name": ref.get("name") or "",
+            "role": ref.get("role") or "Referee",
+        })
+    for linesman in payload.get("linesmen") or []:
+        if not isinstance(linesman, dict):
+            continue
+        rows.append({
+            "game_id": game_id,
+            "game_date": parse_date(game_date),
+            "name": linesman.get("name") or "",
+            "role": "Linesman",
+        })
+    return rows
+
+
+def _extract_on_ice_json(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
+    """Extrahera on-ice spelare vid händelser (positive/negative_participants)."""
+    rows = []
+    for event in payload.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        pos_participants = event.get("positive_participants") or []
+        neg_participants = event.get("negative_participants") or []
+        if not pos_participants and not neg_participants:
+            continue
+
+        event_type = event.get("event_type") or ""
+        period = to_int(event.get("period"))
+        event_time = event.get("time") or ""
+
+        for side, participants in (("positive", pos_participants), ("negative", neg_participants)):
+            for player_number in participants:
+                rows.append({
+                    "game_id": game_id,
+                    "game_date": parse_date(game_date),
+                    "period": period,
+                    "event_time": event_time,
+                    "event_type": event_type,
+                    "team_side": side,
+                    "player_number": str(player_number),
+                })
+    return rows
+
+
+def _extract_player_stats_json(payload: Dict[str, Any], game_id: str, game_date: str) -> List[Dict[str, Any]]:
+    """Extrahera individuell spelarstatistik per match från player_stats[]."""
+    rows = []
+    for ps in payload.get("player_stats") or []:
+        if not isinstance(ps, dict):
+            continue
+        rows.append({
+            "game_id": game_id,
+            "game_date": parse_date(game_date),
+            "team": ps.get("team") or "",
+            "player_id": str(ps.get("player_id") or ""),
+            "player_name": ps.get("player_name") or "",
+            "goals": to_int(ps.get("goals")),
+            "assists": to_int(ps.get("assists")),
+            "pim": to_int(ps.get("pim")),
+            "shots": to_int(ps.get("shots")),
+            "plus_minus": to_int(ps.get("plusMinus") or ps.get("plus_minus")),
+        })
+    return rows
+
+
 def _df(rows: List[Dict], columns: List[str]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     for col in columns:
@@ -307,6 +429,10 @@ def transform_swe_games(payload: Dict[str, Any], *args, **kwargs):
     event_rows: List[Dict] = []
     goalkeeper_rows: List[Dict] = []
     lineup_rows: List[Dict] = []
+    period_score_rows: List[Dict] = []
+    referee_rows: List[Dict] = []
+    on_ice_rows: List[Dict] = []
+    player_stat_rows: List[Dict] = []
 
     for item in payload.get("games") or []:
         game_date = item.get("game_date", "")
@@ -317,11 +443,19 @@ def transform_swe_games(payload: Dict[str, Any], *args, **kwargs):
         event_rows.extend(_extract_events(data, game_id, game_date))
         goalkeeper_rows.extend(_extract_goalkeepers(data, game_id, game_date))
         lineup_rows.extend(_extract_lineups(data, game_id, game_date))
+        period_score_rows.extend(_extract_period_scores(data, game_id, game_date))
+        referee_rows.extend(_extract_referees_json(data, game_id, game_date))
+        on_ice_rows.extend(_extract_on_ice_json(data, game_id, game_date))
+        player_stat_rows.extend(_extract_player_stats_json(data, game_id, game_date))
 
     games_df = _df(game_rows, GAMES_COLUMNS)
     events_df = _df(event_rows, EVENTS_COLUMNS)
     goalkeepers_df = _df(goalkeeper_rows, GOALKEEPERS_COLUMNS)
     lineups_df = _df(lineup_rows, LINEUPS_COLUMNS)
+    period_scores_df = _df(period_score_rows, PERIOD_SCORES_COLUMNS)
+    referees_json_df = _df(referee_rows, REFEREES_JSON_COLUMNS)
+    on_ice_json_df = _df(on_ice_rows, ON_ICE_JSON_COLUMNS)
+    player_stats_json_df = _df(player_stat_rows, PLAYER_STATS_JSON_COLUMNS)
 
     # Ta bort dubletter
     if not games_df.empty:
@@ -339,10 +473,29 @@ def transform_swe_games(payload: Dict[str, Any], *args, **kwargs):
         lineups_df = lineups_df.drop_duplicates(
             subset=["game_id", "team", "position", "player_number"], keep="first"
         )
+    if not period_scores_df.empty:
+        period_scores_df = period_scores_df.drop_duplicates(
+            subset=["game_id", "period"], keep="first"
+        )
+    if not referees_json_df.empty:
+        referees_json_df = referees_json_df.drop_duplicates(
+            subset=["game_id", "name"], keep="first"
+        )
+    if not on_ice_json_df.empty:
+        on_ice_json_df = on_ice_json_df.drop_duplicates(
+            subset=["game_id", "period", "event_time", "event_type", "team_side", "player_number"],
+            keep="first",
+        )
+    if not player_stats_json_df.empty:
+        player_stats_json_df = player_stats_json_df.drop_duplicates(
+            subset=["game_id", "team", "player_name"], keep="first"
+        )
 
     print(
         f"[swe transform] games={len(games_df)}, events={len(events_df)}, "
-        f"goalkeepers={len(goalkeepers_df)}, lineups={len(lineups_df)}"
+        f"goalkeepers={len(goalkeepers_df)}, lineups={len(lineups_df)}, "
+        f"period_scores={len(period_scores_df)}, referees_json={len(referees_json_df)}, "
+        f"on_ice_json={len(on_ice_json_df)}, player_stats_json={len(player_stats_json_df)}"
     )
 
     return {
@@ -350,5 +503,9 @@ def transform_swe_games(payload: Dict[str, Any], *args, **kwargs):
         "game_events": events_df,
         "game_goalkeepers": goalkeepers_df,
         "game_lineups": lineups_df,
+        "game_period_scores": period_scores_df,
+        "game_referees_json": referees_json_df,
+        "game_on_ice_json": on_ice_json_df,
+        "game_player_stats_json": player_stats_json_df,
         "newest_date": payload.get("last_date"),
     }

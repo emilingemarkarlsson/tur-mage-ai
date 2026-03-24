@@ -86,6 +86,10 @@ ON_ICE_COLUMNS = [
     "event_type", "team_abbr", "side", "player_number",
 ]
 
+SPECTATORS_COLUMNS = [
+    "game_id", "game_date", "spectators",
+]
+
 
 def _df(rows: List[Dict], columns: List[str]) -> pd.DataFrame:
     """Bygg DataFrame med fast schema; lägg till saknade kolumner som None."""
@@ -132,6 +136,7 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
     all_penalties: List[Dict] = []
     all_gk_changes: List[Dict] = []
     all_starting_lineup: List[Dict] = []
+    all_spectators: List[Dict] = []
 
     seen_referees: set = set()
 
@@ -164,6 +169,15 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
             all_goals.extend(result.get("goals", []))
             all_penalties.extend(result.get("penalties", []))
             all_gk_changes.extend(result.get("gk_changes", []))
+
+            # Åskådarantal
+            spectators = result.get("spectators")
+            if spectators is not None:
+                all_spectators.append({
+                    "game_id": game_id,
+                    "game_date": game_date,
+                    "spectators": spectators,
+                })
 
         # --- Official_Team_Roster ---
         if "Official_Team_Roster" in pdfs:
@@ -214,6 +228,7 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
     penalties_df = _df(all_penalties, PENALTIES_COLUMNS)
     gk_changes_df = _df(all_gk_changes, GK_CHANGES_COLUMNS)
     starting_lineup_df = _df(all_starting_lineup, STARTING_LINEUP_COLUMNS)
+    spectators_df = _df(all_spectators, SPECTATORS_COLUMNS)
 
     # Normalisera kolumntyper (period = str, blandat int/str: 1,2,3,"OT","SO","total")
     for df in (period_stats_df, on_ice_df, goals_df, penalties_df, gk_changes_df):
@@ -264,6 +279,8 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
             subset=["game_id", "team", "number"],
             keep="first",
         )
+    if not spectators_df.empty:
+        spectators_df = spectators_df.drop_duplicates(subset=["game_id"], keep="first")
 
     print(
         f"[swe pdf transform] referees={len(referees_df)}, "
@@ -271,7 +288,7 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
         f"player_stats={len(player_stats_df)}, goalie_stats={len(goalie_stats_df)}, "
         f"on_ice={len(on_ice_df)}, goals={len(goals_df)}, "
         f"penalties={len(penalties_df)}, gk_changes={len(gk_changes_df)}, "
-        f"starting_lineup={len(starting_lineup_df)}"
+        f"starting_lineup={len(starting_lineup_df)}, spectators={len(spectators_df)}"
     )
 
     return {
@@ -285,4 +302,5 @@ def transform_swe_pdfs(payload: Dict[str, Any], *args, **kwargs) -> Dict[str, An
         "game_penalties": penalties_df,
         "game_gk_changes": gk_changes_df,
         "game_starting_lineup": starting_lineup_df,
+        "game_spectators": spectators_df,
     }

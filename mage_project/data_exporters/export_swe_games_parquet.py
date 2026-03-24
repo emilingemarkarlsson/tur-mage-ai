@@ -67,16 +67,21 @@ def export_swe_games_parquet(data, *args, **kwargs):
     data_lake = os.getenv("DATA_LAKE_PATH", "/home/src/mage_project/data_lake")
     silver_swe = os.path.join(data_lake, "silver", "swe")
 
-    games_df = (data or {}).get("games")
-    events_df = (data or {}).get("game_events")
-    goalkeepers_df = (data or {}).get("game_goalkeepers")
-    lineups_df = (data or {}).get("game_lineups")
+    tables = {
+        "games":                 (data or {}).get("games"),
+        "game_events":           (data or {}).get("game_events"),
+        "game_goalkeepers":      (data or {}).get("game_goalkeepers"),
+        "game_lineups":          (data or {}).get("game_lineups"),
+        "game_period_scores":    (data or {}).get("game_period_scores"),
+        "game_referees_json":    (data or {}).get("game_referees_json"),
+        "game_on_ice_json":      (data or {}).get("game_on_ice_json"),
+        "game_player_stats_json": (data or {}).get("game_player_stats_json"),
+    }
 
-    _write_df(games_df, os.path.join(silver_swe, "games"))
-    _write_df(events_df, os.path.join(silver_swe, "game_events"))
-    _write_df(goalkeepers_df, os.path.join(silver_swe, "game_goalkeepers"))
-    _write_df(lineups_df, os.path.join(silver_swe, "game_lineups"))
+    for table_name, df in tables.items():
+        _write_df(df, os.path.join(silver_swe, table_name))
 
+    games_df = tables["games"]
     games_count = len(games_df) if games_df is not None and not games_df.empty else 0
     print(f"[swe export] Silver skrivet: {games_count} matcher → {silver_swe}")
 
