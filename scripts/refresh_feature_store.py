@@ -29,10 +29,26 @@ if os.path.isfile(_env_file):
 # TRY_CAST used for game_type (stored as VARCHAR or DOUBLE depending on season).
 
 _PLAYER_ROLLING_SQL = """
-WITH base AS (
+WITH name_lookup AS (
+    SELECT DISTINCT playerId AS player_id,
+           SPLIT_PART(skaterFullName, ' ', 1) AS first_name,
+           REGEXP_REPLACE(skaterFullName, CONCAT(SPLIT_PART(skaterFullName, ' ', 1), ' '), '') AS last_name
+    FROM skater_stats WHERE skaterFullName IS NOT NULL
+    UNION
+    SELECT DISTINCT playerId,
+           SPLIT_PART(goalieFullName, ' ', 1),
+           REGEXP_REPLACE(goalieFullName, CONCAT(SPLIT_PART(goalieFullName, ' ', 1), ' '), '')
+    FROM goalie_stats WHERE goalieFullName IS NOT NULL
+),
+base AS (
     SELECT
-        pgs.player_id, pgs.player_first_name, pgs.player_last_name,
-        pgs.game_id, pgs.game_date, g.season, pgs.team_abbr, pgs.position, pgs.is_home,
+        pgs.player_id,
+        COALESCE(pgs.player_first_name, nl.first_name) AS player_first_name,
+        COALESCE(pgs.player_last_name,  nl.last_name)  AS player_last_name,
+        pgs.game_id, pgs.game_date,
+        -- Derive season from game_id (format SSSSTTNNNN): 2009020611 → 20092010
+        (pgs.game_id / 1000000)::BIGINT * 10000 + ((pgs.game_id / 1000000)::BIGINT + 1) AS season,
+        pgs.team_abbr, pgs.position, pgs.is_home,
         COALESCE(pgs.goals, 0)       AS goals,
         COALESCE(pgs.assists, 0)     AS assists,
         COALESCE(pgs.points, 0)      AS points,
@@ -41,7 +57,7 @@ WITH base AS (
         COALESCE(pgs.hits, 0)        AS hits,
         COALESCE(pgs.plus_minus, 0)  AS plus_minus
     FROM player_game_stats pgs
-    JOIN games g ON g.game_id = pgs.game_id
+    LEFT JOIN name_lookup nl ON nl.player_id = pgs.player_id
     WHERE pgs.position NOT IN ('G') AND COALESCE(pgs.toi_seconds, 0) > 0
 ),
 rolling AS (
@@ -79,17 +95,33 @@ FROM rolling
 """
 
 _GOALIE_ROLLING_SQL = """
-WITH base AS (
+WITH name_lookup AS (
+    SELECT DISTINCT playerId AS player_id,
+           SPLIT_PART(skaterFullName, ' ', 1) AS first_name,
+           REGEXP_REPLACE(skaterFullName, CONCAT(SPLIT_PART(skaterFullName, ' ', 1), ' '), '') AS last_name
+    FROM skater_stats WHERE skaterFullName IS NOT NULL
+    UNION
+    SELECT DISTINCT playerId,
+           SPLIT_PART(goalieFullName, ' ', 1),
+           REGEXP_REPLACE(goalieFullName, CONCAT(SPLIT_PART(goalieFullName, ' ', 1), ' '), '')
+    FROM goalie_stats WHERE goalieFullName IS NOT NULL
+),
+base AS (
     SELECT
-        pgs.player_id, pgs.player_first_name, pgs.player_last_name,
-        pgs.game_id, pgs.game_date, g.season, pgs.team_abbr, pgs.is_home,
+        pgs.player_id,
+        COALESCE(pgs.player_first_name, nl.first_name) AS player_first_name,
+        COALESCE(pgs.player_last_name,  nl.last_name)  AS player_last_name,
+        pgs.game_id, pgs.game_date,
+        -- Derive season from game_id (format SSSSTTNNNN): 2009020611 → 20092010
+        (pgs.game_id / 1000000)::BIGINT * 10000 + ((pgs.game_id / 1000000)::BIGINT + 1) AS season,
+        pgs.team_abbr, pgs.is_home,
         COALESCE(pgs.saves, 0)         AS saves,
         COALESCE(pgs.shots_against, 0) AS shots_against,
         COALESCE(pgs.save_pct, 0)      AS save_pct,
         COALESCE(pgs.goals_against, 0) AS goals_against,
         COALESCE(pgs.toi_seconds, 0)   AS toi_seconds
     FROM player_game_stats pgs
-    JOIN games g ON g.game_id = pgs.game_id
+    LEFT JOIN name_lookup nl ON nl.player_id = pgs.player_id
     WHERE pgs.position = 'G' AND COALESCE(pgs.toi_seconds, 0) > 600
 ),
 rolling AS (
@@ -174,14 +206,14 @@ WITH shot_attempts AS (
     WHERE event_type IN ('GOAL', 'SHOT', 'MISSED_SHOT', 'BLOCKED_SHOT')
     GROUP BY game_id, game_date, team_abbr
 ),
+-- Derive game sides from team_game_stats (avoids JOIN to games table)
 game_sides AS (
-    SELECT game_id, game_date, game_type,
-        home_team_abbr AS team_abbr, away_team_abbr AS opponent_abbr
-    FROM games
-    UNION ALL
-    SELECT game_id, game_date, game_type,
-        away_team_abbr AS team_abbr, home_team_abbr AS opponent_abbr
-    FROM games
+    SELECT
+        game_id, game_date,
+        game_type,
+        team_abbr,
+        opponent_abbr
+    FROM team_game_stats
 )
 SELECT
     gs.game_id,

@@ -161,14 +161,28 @@ def refresh_duckdb_views(*args, **kwargs):
         conn.execute(view_sql)
 
     # Player stats per game (one row per player per game) with player names. English view name.
+    # Falls back to skater_stats/goalie_stats for historical players missing from the current
+    # roster snapshot in the players table.
     try:
         conn.execute("""
             CREATE OR REPLACE VIEW player_game_stats AS
+            WITH name_lookup AS (
+                SELECT DISTINCT playerId AS player_id,
+                       SPLIT_PART(skaterFullName, ' ', 1) AS first_name,
+                       REGEXP_REPLACE(skaterFullName, CONCAT(SPLIT_PART(skaterFullName, ' ', 1), ' '), '') AS last_name
+                FROM skater_stats WHERE skaterFullName IS NOT NULL
+                UNION
+                SELECT DISTINCT playerId,
+                       SPLIT_PART(goalieFullName, ' ', 1),
+                       REGEXP_REPLACE(goalieFullName, CONCAT(SPLIT_PART(goalieFullName, ' ', 1), ' '), '')
+                FROM goalie_stats WHERE goalieFullName IS NOT NULL
+            )
             SELECT gp.*,
-                   p.firstName AS player_first_name,
-                   p.lastName AS player_last_name
+                   COALESCE(p.firstName, nl.first_name) AS player_first_name,
+                   COALESCE(p.lastName,  nl.last_name)  AS player_last_name
             FROM game_players gp
             LEFT JOIN players p ON p.id = gp.player_id
+            LEFT JOIN name_lookup nl ON nl.player_id = gp.player_id
         """)
     except Exception:
         pass  # game_players or players missing on first run
