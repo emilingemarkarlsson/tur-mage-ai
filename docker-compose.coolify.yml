@@ -31,8 +31,15 @@ services:
       LITELLM_DEFAULT_MODEL: ${LITELLM_DEFAULT_MODEL:-gemini-flash}
       LITELLM_MAX_INSIGHTS: ${LITELLM_MAX_INSIGHTS:-5}
       MAGE_DATABASE_CONNECTION_URL: postgresql+psycopg2://${POSTGRES_USER:-mage}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mage}
-    ports:
-      - "6789:6789"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mage-ai.rule=Host(`mage.theunnamedroads.com`)"
+      - "traefik.http.routers.mage-ai.entrypoints=https"
+      - "traefik.http.routers.mage-ai.tls=true"
+      - "traefik.http.routers.mage-ai.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mage-ai.loadbalancer.server.port=6789"
+    networks:
+      - coolify
     deploy:
       resources:
         limits:
@@ -58,3 +65,7 @@ volumes:
   postgres_data:
   mage_code:
   mage_data_lake:
+
+networks:
+  coolify:
+    external: true
