@@ -692,21 +692,36 @@ def refresh_duckdb_views(*args, **kwargs):
 
     # Vid local: behåll filen (för Streamlit/validate). Vid s3: ladda upp och ta bort lokal kopia.
     sink = os.getenv("DATA_LAKE_SINK", "local").strip().lower()
-    if sink != "s3":
+    if sink == "s3":
+        if not os.path.isfile(db_path):
+            return
+        s3_prefix = os.getenv("S3_DATA_LAKE_PREFIX", "nhl-analytics")
+        s3_bucket = os.getenv("S3_DATA_LAKE_BUCKET") or get_s3_bucket()
+        if s3_bucket:
+            client = get_s3_client()
+            key = f"{s3_prefix}/gold/nhl.duckdb"
+            upload_file(client, s3_bucket, key, db_path)
+            print("[refresh_duckdb_views] Gold uppladdad till Hetzner S3.")
+    else:
         print(f"[refresh_duckdb_views] DATA_LAKE_SINK=local – Gold sparad lokalt: {db_path}")
-        return
 
-    if not os.path.isfile(db_path):
-        return
-    s3_prefix = os.getenv("S3_DATA_LAKE_PREFIX", "nhl-analytics")
-    s3_bucket = os.getenv("S3_DATA_LAKE_BUCKET") or get_s3_bucket()
-    if not s3_bucket:
-        return
-    client = get_s3_client()
-    key = f"{s3_prefix}/gold/nhl.duckdb"
-    upload_file(client, s3_bucket, key, db_path)
-    try:
-        os.remove(db_path)
-    except OSError:
-        pass
-    print("[refresh_duckdb_views] Gold uppladdad till S3, lokal fil borttagen.")
+    # Ladda alltid upp Gold till Minio nhl-gold (för Paperclip-access), om konfigurerat.
+    minio_gold_bucket = os.getenv("MINIO_GOLD_BUCKET", "").strip()
+    minio_endpoint = os.getenv("MINIO_ENDPOINT", "").strip()
+    minio_access_key = os.getenv("MINIO_ACCESS_KEY", "").strip()
+    minio_secret_key = os.getenv("MINIO_SECRET_KEY", "").strip()
+    if minio_gold_bucket and minio_endpoint and minio_access_key and os.path.isfile(db_path):
+        try:
+            import boto3
+            endpoint_url = minio_endpoint if minio_endpoint.startswith("http") else f"https://{minio_endpoint}"
+            minio_client = boto3.client(
+                "s3",
+                endpoint_url=endpoint_url,
+                aws_access_key_id=minio_access_key,
+                aws_secret_access_key=minio_secret_key,
+                region_name="us-east-1",
+            )
+            upload_file(minio_client, minio_gold_bucket, "nhl.duckdb", db_path)
+            print(f"[refresh_duckdb_views] Gold uppladdad till Minio: {minio_gold_bucket}/nhl.duckdb")
+        except Exception as e:
+            print(f"[refresh_duckdb_views] Minio Gold upload misslyckades (ignorerar): {e}")
