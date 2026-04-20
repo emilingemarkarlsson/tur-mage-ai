@@ -282,6 +282,24 @@ ssh tha "docker exec $MAGE sh -c 'echo 2010 > /home/src/mage_project/state/games
 ### "Mage-postgres förlorar data vid redeploy"
 - Volymen `k0oooc8ok4848880sk0g0kkc_postgres-data` är namngiven och persisterar. Kontrollera: `ssh tha "docker volume ls | grep k0oooc"`.
 
+### "Resource-limits (memory/CPU) försvann efter Coolify Redeploy"
+Coolify har sin **egen kopia** av compose-filen i `/data/coolify/services/k0oooc8ok4848880sk0g0kkc/docker-compose.yml` som den regenererar från sin databas vid varje Redeploy. Ändringar direkt i filen skrivs över.
+
+**Hållbar lösning:** uppdatera compose-innehållet via Coolify UI:
+1. Gå till `mage-tur → Configuration → Docker Compose`
+2. Klistra in innehållet från `docker-compose.coolify.yml` (med `memory: 4G`, `cpus: "3.0"` för mage och `memory: 512M`, `cpus: "0.5"` för postgres)
+3. Spara → Redeploy
+
+**Nödlösning (direktredigering på servern):**
+```bash
+# Redigera Coolifys kopia och force-recreate
+ssh tha "vi /data/coolify/services/k0oooc8ok4848880sk0g0kkc/docker-compose.yml"
+COMPOSE=/data/coolify/services/k0oooc8ok4848880sk0g0kkc/docker-compose.yml
+ENV_FILE=/data/coolify/services/k0oooc8ok4848880sk0g0kkc/.env
+ssh tha "docker compose -f $COMPOSE --env-file $ENV_FILE up -d --force-recreate"
+```
+OBS: använd alltid `--env-file .env` och rätt volymnamn (`mage-code`, `mage-data-lake`, `postgres-data` med bindestreck) – annars skapas nya tomma volymer.
+
 ---
 
 ## Referens: env-variabler som är satta i Coolify
