@@ -331,10 +331,18 @@ MAGE_VERSION                        = latest
 - [x] Git-integration på plats – se [MAGE_GIT_INTEGRATION.md](MAGE_GIT_INTEGRATION.md)
 - [x] `scripts/sync_from_github.sh` – git pull-baserad deploy
 - [x] Uppdatera `tur-coolify-setup/SERVICES.md` med `mage-tur` som aktiv service
-- [ ] Lägg till PAT i Mage UI så commits kan göras från UI (se MAGE_GIT_INTEGRATION.md)
-- [ ] Konfigurera schedules/triggers i Mage UI för automatisk körning
-- [ ] Sätt upp Telegram/email-notifieringar för pipeline-fel
-- [ ] Postgres-backup cron (`pg_dump` → S3 dagligen)
-- [ ] Överväg konvertera Coolify Service → Application för ren GitOps/auto-deploy
-- [ ] Lägg till `requirements.txt`-installation i Dockerfile som byggs av Coolify (GHCR)
-- [ ] Migrera `pg_dump` från lokal Postgres om du vill ta med run history / variables
+- [x] Postgres-backup cron (`pg_dump` → MinIO dagligen) – `/usr/local/bin/backup_mage_postgres.sh`
+- [x] Slack-notifieringar vid pipeline-fel – se [MAGE_NOTIFICATIONS.md](MAGE_NOTIFICATIONS.md)
+- [x] Dockerfile uppdaterad – bakar in kod + deps (förberedelse för GHCR)
+- [x] Dokumenterat schedule-rekommendationer – se [MAGE_SCHEDULES.md](MAGE_SCHEDULES.md)
+- [x] GitHub Actions-workflow för att bygga + pusha image till GHCR (`.github/workflows/docker-build.yml`)
+- [x] `scripts/deploy_image_to_coolify.sh` för att pull:a ny GHCR-image
+- [x] GitOps-flöde dokumenterat – se [GITOPS_FLOW.md](GITOPS_FLOW.md)
+- [ ] **Manuella steg kvar (kräver att du klickar i UI):**
+  - [ ] Skapa GitHub PAT och klistra in i Mage UI (se MAGE_GIT_INTEGRATION.md)
+  - [ ] Konfigurera schedules/triggers i Mage UI (se MAGE_SCHEDULES.md)
+  - [ ] Trigga första GHCR-build:en via Actions-tab → "Run workflow"
+- [ ] **Framtida förbättringar:**
+  - [ ] Lägg till Coolify webhook-secret i GitHub för auto-deploy efter image-build
+  - [ ] Överväg konvertera Coolify Service → Application för ren GitOps (se GITOPS_FLOW.md)
+  - [ ] Migrera `pg_dump` från lokal Postgres om du vill ta med run history / variables
