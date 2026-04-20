@@ -27,6 +27,31 @@ riktigt git-repo kopplat till `origin/main` på GitHub. Gitignored paths
 (`mage_data/`, `mage_project/state/`, `mage_project/data_lake/`,
 `mage_project/metadata.yaml`) rörs aldrig av git-operationer.
 
+Produktion kör **Docker-image från GitHub Container Registry** (byggd i GitHub Actions):
+`ghcr.io/emilingemarkarlsson/tur-mage-ai:latest`. Coolify **Redeploy** (eller motsvarande)
+plockar då in senaste bygget.
+
+## Checklist: lokal dev → produktion (rekommenderat)
+
+Arbeta alltid i **ett repo**: `tur-mage-ai` (t.ex. `~/Documents/dev/tur-mage-ai`). Det är
+samma kod som byggs till prod – inget separat “dev-projekt”.
+
+| Steg | Gör så här |
+|------|----------------|
+| 1 | Redigera `mage_project/` (och vid behov `requirements.txt` för nya paket). |
+| 2 | Testa lokalt: `docker compose up` (eller er vanliga lokala compose). |
+| 3 | Commit + push till `main`: `git add` → `git commit` → `git push origin main`. |
+| 4 | Öppna GitHub → **Actions** → vänta tills **Build and push Mage image** är **grön**. |
+| 5 | Deploy till Coolify så ny image används: **Redeploy** på tjänsten `mage-tur` i Coolify UI, **eller** från laptop: `cd ~/Documents/dev/tur-coolify-setup && ./scripts/coolify-update.sh deploy k0oooc8ok4848880sk0g0kkc` (kräver `~/.coolify-token`). |
+| 6 | Kontrollera `https://mage.theunnamedroads.com/` och kör gärna en lätt pipeline som röktest. |
+
+**Nya Python-beroenden:** lägg alltid i `requirements.txt` och committa – de installeras när
+GitHub Actions bygger imagen.
+
+**Snabb iteration utan att vänta på image:** `./scripts/sync_from_github.sh --restart` gör
+`git pull` i volymen på servern och startar om. Bra när du bara vill få ut kod snabbt;
+**källan för full prod-match** är fortfarande GHCR-bygget + redeploy.
+
 ## Två arbetssätt
 
 ### A. Utveckling lokalt (primärt, rekommenderat)
@@ -39,10 +64,8 @@ riktigt git-repo kopplat till `origin/main` på GitHub. Gitignored paths
    git commit -m "feat: new pipeline step"
    git push origin main
    ```
-4. Synka till Coolify + restart:
-   ```bash
-   ./scripts/sync_from_github.sh --restart
-   ```
+4. Följ **Checklist: lokal dev → produktion** ovan (Actions → redeploy). Vid behov av snabb
+   synk utan ny image: `./scripts/sync_from_github.sh --restart`
 
 ### B. Redigering i Mage UI (direkt i produktion)
 
@@ -166,17 +189,19 @@ ssh tha 'docker exec mage-k0oooc8ok4848880sk0g0kkc \
 
 ## Rekommenderat flöde framåt
 
-1. **Redigera primärt lokalt** i Cursor (bättre diff-verktyg, AI-hjälp)
-2. **Testa lokalt** med `docker compose up`
-3. **Commita + pusha till main**
-4. **Kör `./scripts/sync_from_github.sh --restart`**
-5. **Verifiera i Coolify-UI:n** att ingen pipeline fallerar efter deploy
+1. **Redigera primärt lokalt** i Cursor (bättre diff-verktyg, AI-hjälp).
+2. **Testa lokalt** med `docker compose up`.
+3. **Commita + pusha till `main`**, vänta på **Build and push Mage image**, **redeploy** i Coolify (se checklisten ovan).
+4. **Verifiera** att pipelines beter sig som väntat i prod.
 
 Använd Mage UI för snabba fixar direkt i produktion (t.ex. justera en
 query), men commit:a dem snabbt så du inte tappar synk med GitHub.
 
 ## Relaterade filer
 
-- `scripts/sync_from_github.sh` – pull + restart
+- `scripts/sync_from_github.sh` – snabb `git pull` + restart på servern (utan ny GHCR-image)
+- `scripts/deploy_image_to_coolify.sh` – pull av GHCR-image + hjälp för manuell redeploy
 - `scripts/deploy_to_coolify.sh` – fallback (rsync, använd för oommitted changes)
+- `.github/workflows/docker-build.yml` – bygger och pushar image till GHCR
 - `documentation/COOLIFY_MIGRATION.md` – övergripande Coolify-setup
+- `documentation/GITOPS_FLOW.md` – arkitektur för GitOps / GHCR / Coolify
