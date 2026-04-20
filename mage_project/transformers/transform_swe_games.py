@@ -134,6 +134,18 @@ def _extract_game_row(payload: Dict[str, Any], game_date: str) -> Dict[str, Any]
     went_so = any(lbl in ("SO", "SHOOTOUT") for lbl in period_labels)
     went_ot = went_to_ot and not went_so
 
+    # Fallback: om period_scores saknar OT-info, detektera via events (period=4 eller "OT")
+    if not went_to_ot:
+        events = payload.get("events") or []
+        event_periods = {str(e.get("period", "")).upper() for e in events if e.get("period")}
+        so_labels = {"SO", "SHOOTOUT"}
+        went_so = went_so or bool(event_periods & so_labels)
+        has_ot_event = any(
+            (p.isdigit() and int(p) > 3) or p in ("OT", "OVERTIME")
+            for p in event_periods
+        )
+        went_ot = (has_ot_event and not went_so) or went_ot
+
     if home_score is not None and away_score is not None:
         if home_score > away_score:
             home_pts, away_pts = 2, (1 if went_to_ot else 0)

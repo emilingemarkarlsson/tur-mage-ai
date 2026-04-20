@@ -75,7 +75,6 @@ def export_swe_games_parquet(data, *args, **kwargs):
         "game_period_scores":    (data or {}).get("game_period_scores"),
         "game_referees_json":    (data or {}).get("game_referees_json"),
         "game_on_ice_json":      (data or {}).get("game_on_ice_json"),
-        "game_player_stats_json": (data or {}).get("game_player_stats_json"),
     }
 
     for table_name, df in tables.items():

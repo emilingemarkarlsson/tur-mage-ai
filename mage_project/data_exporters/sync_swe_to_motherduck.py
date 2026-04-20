@@ -23,7 +23,6 @@ UPSERT_KEYS = {
     "game_period_scores":     ("game_id", "period"),
     "game_referees_json":     ("game_id", "name"),
     "game_on_ice_json":       ("game_id", "period", "event_time", "event_type", "team_side", "player_number"),
-    "game_player_stats_json": ("game_id", "team", "player_name"),
     # PDF-extrakt
     "game_referees":        ("game_id", "name"),
     "game_period_stats":    ("game_id", "team", "period"),
@@ -41,7 +40,7 @@ UPSERT_KEYS = {
 SWE_DATASETS = [
     # JSON-pipeline
     "games", "game_events", "game_goalkeepers", "game_lineups",
-    "game_period_scores", "game_referees_json", "game_on_ice_json", "game_player_stats_json",
+    "game_period_scores", "game_referees_json", "game_on_ice_json",
     # PDF-pipeline
     "game_referees", "game_period_stats", "game_roster",
     "game_player_stats", "game_goalie_stats", "game_on_ice",
