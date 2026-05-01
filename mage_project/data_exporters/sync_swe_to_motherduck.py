@@ -77,8 +77,11 @@ def _md_table_exists(conn, catalog: str, table: str) -> bool:
             f"WHERE table_schema = 'main' AND table_name = '{table}' LIMIT 1"
         ).fetchall()
         return len(rows) > 0
-    except Exception:
-        return False
+    except Exception as e:
+        # Vid fel: anta att tabellen FINNS för att undvika att CREATE OR REPLACE
+        # skriver över historisk data i MotherDuck.
+        print(f"[swe motherduck] Kan inte avgöra om {table} finns, antar att den gör det: {e}")
+        return True
 
 
 def _sync_to_motherduck(db_path: str):
@@ -165,7 +168,7 @@ def _sync_to_motherduck(db_path: str):
                         join_cond = " AND ".join(
                             f'md."{k}" = src."{k}"' for k in keys
                         )
-                        result = conn.execute(f"""
+                        conn.execute(f"""
                             INSERT INTO "{md_db}".main."{name}"
                             SELECT src.* FROM local.main."{name}" src
                             WHERE NOT EXISTS (
@@ -173,8 +176,7 @@ def _sync_to_motherduck(db_path: str):
                                 WHERE {join_cond}
                             )
                         """)
-                        inserted = conn.execute(f"SELECT changes()").fetchone()[0]
-                        print(f"[swe motherduck] {name}: {inserted} nya rader insatta (UPSERT)")
+                        print(f"[swe motherduck] {name}: UPSERT klar")
                 else:
                     conn.execute(
                         f'CREATE OR REPLACE TABLE "{md_db}".main."{name}" '

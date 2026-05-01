@@ -1,0 +1,20 @@
+blocks:
+- all_upstream_blocks_executed: true
+  downstream_blocks:
+  - validate_swe_scrape
+  name: scrape swe games
+  status: updated
+  type: data_loader
+  upstream_blocks: []
+  uuid: scrape_swe_games
+- all_upstream_blocks_executed: true
+  downstream_blocks: []
+  name: validate swe scrape
+  status: updated
+  type: data_exporter
+  upstream_blocks:
+  - scrape_swe_games
+  uuid: validate_swe_scrape
+name: swe scrape pipeline
+type: python
+uuid: swe_scrape_pipeline

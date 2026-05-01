@@ -27,6 +27,12 @@ services:
       MINIO_GOLD_BUCKET: ${MINIO_GOLD_BUCKET:-nhl-gold}
       MOTHERDUCK_TOKEN: ${MOTHERDUCK_TOKEN:-}
       MOTHERDUCK_DATABASE_NAME: ${MOTHERDUCK_DATABASE_NAME:-nhl}
+      # Swehockey S3 (swehockey-data bucket) – separata credentials från NHL-bucketen
+      SWE_ENDPOINT: ${SWE_ENDPOINT:-hel1.your-objectstorage.com}
+      SWE_ACCESS_KEY: ${SWE_ACCESS_KEY}
+      SWE_SECRET_KEY: ${SWE_SECRET_KEY}
+      SWE_BUCKET: ${SWE_BUCKET:-swehockey-data}
+      SWE_SECURE: ${SWE_SECURE:-true}
       LITELLM_BASE_URL: ${LITELLM_BASE_URL:-}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-}
       LITELLM_DEFAULT_MODEL: ${LITELLM_DEFAULT_MODEL:-gemini-flash}
