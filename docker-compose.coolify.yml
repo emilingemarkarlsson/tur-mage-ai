@@ -32,6 +32,10 @@ services:
       LITELLM_DEFAULT_MODEL: ${LITELLM_DEFAULT_MODEL:-gemini-flash}
       LITELLM_MAX_INSIGHTS: ${LITELLM_MAX_INSIGHTS:-5}
       MAGE_DATABASE_CONNECTION_URL: postgresql+psycopg2://${POSTGRES_USER:-mage}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mage}
+      # io_config.yaml läser AWS_*-variablerna – mappa mot Hetzner-credentials
+      AWS_ACCESS_KEY_ID: ${HETZNER_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${HETZNER_SECRET_KEY}
+      AWS_REGION: ${HETZNER_REGION:-eu-central}
     deploy:
       resources:
         limits:

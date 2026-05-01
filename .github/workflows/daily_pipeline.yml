@@ -2,133 +2,22 @@ name: NHL Daily Pipeline
 
 on:
   schedule:
-    # Måndag 07:00 UTC: alla tre pipelines (dimensions + seasonal + games).
-    - cron: "0 7 * * 1"
-    # Tisdag–Söndag 07:00 UTC: bara games_pipeline (dimensions/seasonal ändras sällan).
-    - cron: "0 7 * * 0,2-6"
+    # Varje dag 07:00 UTC – analytics_pipeline körs alltid.
+    # dimensions/seasonal/games körs av Mage AI-instansen (mage.theunnamedroads.com).
+    - cron: "0 7 * * *"
   workflow_dispatch:
-    # Manuell körning från GitHub UI – t.ex. för att ladda ett specifikt år efter missad körning.
-    inputs:
-      games_year:
-        description: "Ladda endast ett år (t.ex. 2025). Lämna tomt för inkrementell körning."
-        required: false
-        default: ""
+    # Manuell trigger – kör analytics direkt (t.ex. vid felsökning).
 
 jobs:
-  run-pipelines:
+  run-analytics:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      # Bevara last_games_date.txt mellan körningar så inkrementell laddning fungerar.
-      # Om cachen saknas (första körningen eller >7 dagar gammal) sätts fallback nedan.
-      - name: Restore state cache
-        id: restore-state
-        uses: actions/cache/restore@v4
-        with:
-          path: mage_project/state
-          key: nhl-state-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            nhl-state-${{ runner.os }}-
-
-      - name: Ensure state directory and fallback date
-        run: |
-          mkdir -p mage_project/state
-          if [ ! -f mage_project/state/last_games_date.txt ]; then
-            # Ingen cache: ladda senaste 14 dagarna som säker fallback (undviker full historik)
-            FALLBACK=$(date -d '14 days ago' '+%Y-%m-%d' 2>/dev/null || date -v-14d '+%Y-%m-%d')
-            echo "$FALLBACK" > mage_project/state/last_games_date.txt
-            echo "[state] Ingen cache – fallback till $FALLBACK"
-          else
-            echo "[state] Återställd: $(cat mage_project/state/last_games_date.txt)"
-          fi
-
-      - name: Set games_year if provided via workflow_dispatch
-        if: ${{ github.event.inputs.games_year != '' }}
-        run: |
-          echo "${{ github.event.inputs.games_year }}" > mage_project/state/games_year.txt
-          echo "[state] games_year satt till ${{ github.event.inputs.games_year }}"
-
-      - name: Run dimensions_pipeline
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 7 * * 1'
-        env:
-          S3_SOURCE: hetzner
-          HETZNER_BUCKET: ${{ secrets.HETZNER_BUCKET }}
-          HETZNER_ENDPOINT: ${{ secrets.HETZNER_ENDPOINT }}
-          HETZNER_REGION: ${{ secrets.HETZNER_REGION }}
-          HETZNER_ACCESS_KEY: ${{ secrets.HETZNER_ACCESS_KEY }}
-          HETZNER_SECRET_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
-          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
-          MOTHERDUCK_DATABASE_NAME: nhl
-          DATA_LAKE_PATH: ${{ github.workspace }}/mage_project/data_lake
-          DATA_LAKE_SINK: local
-          GAMES_START_DATE: "2010-01-01"
-          GAMES_BATCH_SIZE: "10"
-          # Postgres ej tillgänglig i runner – Mage använder SQLite som fallback
-          MAGE_DATABASE_CONNECTION_URL: "sqlite:////tmp/mage_meta.db"
-          # Tomma variabler för att undvika io_config.yaml-fel
-          MINIO_ENDPOINT: ""
-          AWS_ACCESS_KEY_ID: ${{ secrets.HETZNER_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
-          AWS_REGION: eu-central
-        run: mage run mage_project dimensions_pipeline
-
-      - name: Run seasonal_stats_pipeline
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 7 * * 1'
-        env:
-          S3_SOURCE: hetzner
-          HETZNER_BUCKET: ${{ secrets.HETZNER_BUCKET }}
-          HETZNER_ENDPOINT: ${{ secrets.HETZNER_ENDPOINT }}
-          HETZNER_REGION: ${{ secrets.HETZNER_REGION }}
-          HETZNER_ACCESS_KEY: ${{ secrets.HETZNER_ACCESS_KEY }}
-          HETZNER_SECRET_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
-          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
-          MOTHERDUCK_DATABASE_NAME: nhl
-          DATA_LAKE_PATH: ${{ github.workspace }}/mage_project/data_lake
-          DATA_LAKE_SINK: local
-          GAMES_START_DATE: "2010-01-01"
-          GAMES_BATCH_SIZE: "10"
-          MAGE_DATABASE_CONNECTION_URL: "sqlite:////tmp/mage_meta.db"
-          MINIO_ENDPOINT: ""
-          AWS_ACCESS_KEY_ID: ${{ secrets.HETZNER_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
-          AWS_REGION: eu-central
-        run: mage run mage_project seasonal_stats_pipeline
-
-      - name: Run games_pipeline
-        env:
-          S3_SOURCE: hetzner
-          HETZNER_BUCKET: ${{ secrets.HETZNER_BUCKET }}
-          HETZNER_ENDPOINT: ${{ secrets.HETZNER_ENDPOINT }}
-          HETZNER_REGION: ${{ secrets.HETZNER_REGION }}
-          HETZNER_ACCESS_KEY: ${{ secrets.HETZNER_ACCESS_KEY }}
-          HETZNER_SECRET_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
-          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
-          MOTHERDUCK_DATABASE_NAME: nhl
-          DATA_LAKE_PATH: ${{ github.workspace }}/mage_project/data_lake
-          DATA_LAKE_SINK: local
-          GAMES_START_DATE: "2010-01-01"
-          GAMES_BATCH_SIZE: "10"
-          MAGE_DATABASE_CONNECTION_URL: "sqlite:////tmp/mage_meta.db"
-          MINIO_ENDPOINT: ""
-          AWS_ACCESS_KEY_ID: ${{ secrets.HETZNER_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
-          AWS_REGION: eu-central
-        run: mage run mage_project games_pipeline
 
       - name: Run analytics_pipeline
         env:
@@ -141,30 +30,10 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # mage-ai pulls in duckdb 1.5.x; MotherDuck extension requires <=1.2.x.
-          # Install duckdb first, then motherduck with --no-deps to prevent pip
-          # from resolving motherduck's duckdb dependency and upgrading it.
+          # mage-ai drar in duckdb 1.5.x; MotherDuck kräver <=1.2.x.
+          # Installera duckdb först, sedan motherduck med --no-deps.
           python3 -m venv /tmp/analytics_venv
           /tmp/analytics_venv/bin/pip install -q openai python-dotenv pandas
           /tmp/analytics_venv/bin/pip install -q "duckdb==1.2.2"
           /tmp/analytics_venv/bin/pip install -q --no-deps motherduck
           /tmp/analytics_venv/bin/python3 scripts/run_analytics_pipeline.py
-
-      - name: Remove games_year.txt after manual run
-        if: ${{ github.event.inputs.games_year != '' }}
-        run: |
-          rm -f mage_project/state/games_year.txt
-          echo "[state] games_year.txt borttagen – nästa körning blir inkrementell"
-
-      - name: Save state cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: mage_project/state
-          key: nhl-state-${{ runner.os }}-${{ github.run_id }}
-
-      - name: Show state after run
-        if: always()
-        run: |
-          echo "=== State efter körning ==="
-          cat mage_project/state/last_games_date.txt 2>/dev/null || echo "(ingen state)"
