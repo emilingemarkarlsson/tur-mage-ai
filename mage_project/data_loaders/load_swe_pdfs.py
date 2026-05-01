@@ -206,10 +206,22 @@ def load_swe_pdfs(*args, **kwargs):
     except (TypeError, ValueError):
         pass
 
+    # Max antal batchar per körning (0 = obegränsat). Används för schemalagd inkrementell körning.
+    max_batches = 0
+    try:
+        max_batches = max(0, int(kwargs.get("swe_pdf_max_batches", 0)))
+    except (TypeError, ValueError):
+        pass
+
     num_batches = (len(new_ids) + batch_size - 1) // batch_size
+    if max_batches:
+        print(f"[swe pdf loader] Max {max_batches} batchar per körning ({batch_size * max_batches} game_ids).")
     newly_processed = set()
 
     for start in range(0, len(new_ids), batch_size):
+        if max_batches and len(newly_processed) // batch_size >= max_batches:
+            print(f"[swe pdf loader] max_batches={max_batches} nått – stannar här. Kör igen för mer.")
+            break
         batch_ids = new_ids[start: start + batch_size]
         batch_num = start // batch_size + 1
 
