@@ -72,14 +72,13 @@ def _build_local_duckdb(db_path: str, silver_swe: str):
 
 def _md_table_exists(conn, catalog: str, table: str) -> bool:
     try:
-        rows = conn.execute(
-            f"SELECT 1 FROM \"{catalog}\".information_schema.tables "
-            f"WHERE table_schema = 'main' AND table_name = '{table}' LIMIT 1"
-        ).fetchall()
-        return len(rows) > 0
+        conn.execute(f'SELECT 1 FROM "{catalog}".main."{table}" LIMIT 0')
+        return True
     except Exception as e:
-        # Vid fel: anta att tabellen FINNS för att undvika att CREATE OR REPLACE
-        # skriver över historisk data i MotherDuck.
+        err = str(e).lower()
+        if any(s in err for s in ("does not exist", "not found", "no table", "catalog error")):
+            return False
+        # Annat fel (nätverk, timeout etc.) – anta att tabellen FINNS
         print(f"[swe motherduck] Kan inte avgöra om {table} finns, antar att den gör det: {e}")
         return True
 

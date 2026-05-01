@@ -90,14 +90,13 @@ def _sync_to_motherduck(db_path: str) -> None:
 
     def _md_table_exists(conn, catalog: str, name: str) -> bool:
         try:
-            rows = conn.execute(
-                f"SELECT 1 FROM \"{catalog}\".information_schema.tables "
-                f"WHERE table_schema = 'main' AND table_name = '{name}' LIMIT 1"
-            ).fetchall()
-            return len(rows) > 0
+            conn.execute(f'SELECT 1 FROM "{catalog}".main."{name}" LIMIT 0')
+            return True
         except Exception as e:
-            # Vid fel: anta att tabellen FINNS för att undvika att CREATE OR REPLACE
-            # skriver över historisk data i MotherDuck. UPSERT-försöket nedan fångar felet.
+            err = str(e).lower()
+            if any(s in err for s in ("does not exist", "not found", "no table", "catalog error")):
+                return False
+            # Annat fel (nätverk, timeout etc.) – anta att tabellen FINNS
             print(f"[_md_table_exists] Kan inte avgöra om {name} finns, antar att den gör det: {e}")
             return True
 
