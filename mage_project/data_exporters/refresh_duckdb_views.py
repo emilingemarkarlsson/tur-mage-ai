@@ -95,8 +95,11 @@ def _sync_to_motherduck(db_path: str) -> None:
                 f"WHERE table_schema = 'main' AND table_name = '{name}' LIMIT 1"
             ).fetchall()
             return len(rows) > 0
-        except Exception:
-            return False
+        except Exception as e:
+            # Vid fel: anta att tabellen FINNS för att undvika att CREATE OR REPLACE
+            # skriver över historisk data i MotherDuck. UPSERT-försöket nedan fångar felet.
+            print(f"[_md_table_exists] Kan inte avgöra om {name} finns, antar att den gör det: {e}")
+            return True
 
     catalog = md_db
     ok, fail = 0, 0
