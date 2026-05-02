@@ -8,3 +8,4 @@ streamlit
 python-dotenv
 openai
 minio>=7.2.0
+pdfplumber

@@ -113,11 +113,11 @@ def _split_penalty_description(desc: str) -> Tuple[str, str]:
     """
     Dela upp straffbeskrivning i spelarnamn och straffrubrik.
     T.ex. "HEDLUND, Pelle Roughing" → ("HEDLUND, Pelle", "Roughing")
+    Format: "LASTNAME, Firstname Infraction description"
+    Hanterar specialtecken i namn (É, Ü, Ø etc.) via generisk matchning.
     """
-    m = re.match(
-        r"^([A-ZÄÅÖ][A-ZÄÅÖÜ\-]+,\s+[A-Za-zäåöü][a-zäåöü\-]+)\s+(.+)$",
-        desc.strip(),
-    )
+    # Hitta "NÅGOT, Något " (lazy match t.o.m. komma + mellanslag + ett ord)
+    m = re.match(r"^(.+?,\s+\S+)\s+(.+)$", desc.strip())
     if m:
         return m.group(1).strip(), m.group(2).strip()
     return desc.strip(), ""
@@ -157,10 +157,10 @@ _PERIOD_STAT_ROW = re.compile(
 )
 _GOAL_LINE = re.compile(
     r"^Goal\s+"
-    r"(\d{2}:\d{2})\s+"                          # time
+    r"(\d{2}:\d{2})\s+"                           # time
     r"(\S+)\s+"                                    # team abbr
     r"(\d+\s*[-–]\s*\d+)\s+"                      # score "0 - 1"
-    r"(EQ|PP\d?|SH|EN|OT|PS|GWS|N/A)\s+"         # goal type
+    r"(EQ|PP\d?|SH\d?|EN|OT\d?|PS|GWS|N/A)\s+"  # goal type (incl. PP1, SH1, OT1 etc.)
     r"(.*)"                                        # rest: "number name [Participation]"
 )
 _PENALTY_LINE = re.compile(
