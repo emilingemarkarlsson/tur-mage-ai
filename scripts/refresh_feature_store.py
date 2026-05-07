@@ -152,18 +152,43 @@ FROM rolling
 
 _TEAM_ROLLING_SQL = """
 WITH base AS (
+    -- Unpivot games (home/away columns) into one row per team per game.
+    -- team_game_stats only contains FUT placeholder rows so we derive from games instead.
     SELECT
-        team_abbr, game_id, game_date, season, is_home, opponent_abbr,
-        COALESCE(TRY_CAST(team_points      AS DOUBLE), 0) AS team_points,
-        COALESCE(TRY_CAST(goals_for        AS DOUBLE), 0) AS goals_for,
-        COALESCE(TRY_CAST(goals_against    AS DOUBLE), 0) AS goals_against,
-        COALESCE(TRY_CAST(sog              AS DOUBLE), 0) AS sog,
-        COALESCE(TRY_CAST(pp_goals         AS DOUBLE), 0) AS pp_goals,
-        COALESCE(TRY_CAST(pp_opportunities AS DOUBLE), 0) AS pp_opportunities,
-        COALESCE(TRY_CAST(hits             AS DOUBLE), 0) AS hits,
-        COALESCE(TRY_CAST(blocked_shots    AS DOUBLE), 0) AS blocked_shots
-    FROM team_game_stats
-    WHERE TRY_CAST(game_type AS INTEGER) = 2
+        game_id, game_date, season, game_type,
+        home_team_abbr            AS team_abbr,
+        away_team_abbr            AS opponent_abbr,
+        TRUE                      AS is_home,
+        COALESCE(TRY_CAST(home_points          AS INTEGER), 0) AS team_points,
+        COALESCE(TRY_CAST(home_score           AS INTEGER), 0) AS goals_for,
+        COALESCE(TRY_CAST(away_score           AS INTEGER), 0) AS goals_against,
+        COALESCE(TRY_CAST(home_sog             AS INTEGER), 0) AS sog,
+        COALESCE(TRY_CAST(home_pp_goals        AS INTEGER), 0) AS pp_goals,
+        COALESCE(TRY_CAST(home_pp_opportunities AS INTEGER), 0) AS pp_opportunities,
+        COALESCE(TRY_CAST(home_hits            AS INTEGER), 0) AS hits,
+        COALESCE(TRY_CAST(home_blocked         AS INTEGER), 0) AS blocked_shots
+    FROM games
+    WHERE status NOT IN ('FUT', 'PRE')
+      AND TRY_CAST(game_type AS INTEGER) = 2
+
+    UNION ALL
+
+    SELECT
+        game_id, game_date, season, game_type,
+        away_team_abbr            AS team_abbr,
+        home_team_abbr            AS opponent_abbr,
+        FALSE                     AS is_home,
+        COALESCE(TRY_CAST(away_points          AS INTEGER), 0) AS team_points,
+        COALESCE(TRY_CAST(away_score           AS INTEGER), 0) AS goals_for,
+        COALESCE(TRY_CAST(home_score           AS INTEGER), 0) AS goals_against,
+        COALESCE(TRY_CAST(away_sog             AS INTEGER), 0) AS sog,
+        COALESCE(TRY_CAST(away_pp_goals        AS INTEGER), 0) AS pp_goals,
+        COALESCE(TRY_CAST(away_pp_opportunities AS INTEGER), 0) AS pp_opportunities,
+        COALESCE(TRY_CAST(away_hits            AS INTEGER), 0) AS hits,
+        COALESCE(TRY_CAST(away_blocked         AS INTEGER), 0) AS blocked_shots
+    FROM games
+    WHERE status NOT IN ('FUT', 'PRE')
+      AND TRY_CAST(game_type AS INTEGER) = 2
 ),
 rolling AS (
     SELECT *,
@@ -206,14 +231,12 @@ WITH shot_attempts AS (
     WHERE event_type IN ('GOAL', 'SHOT', 'MISSED_SHOT', 'BLOCKED_SHOT')
     GROUP BY game_id, game_date, team_abbr
 ),
--- Derive game sides from team_game_stats (avoids JOIN to games table)
 game_sides AS (
-    SELECT
-        game_id, game_date,
-        game_type,
-        team_abbr,
-        opponent_abbr
-    FROM team_game_stats
+    SELECT game_id, game_date, game_type, home_team_abbr AS team_abbr, away_team_abbr AS opponent_abbr
+    FROM games WHERE status NOT IN ('FUT', 'PRE')
+    UNION ALL
+    SELECT game_id, game_date, game_type, away_team_abbr, home_team_abbr
+    FROM games WHERE status NOT IN ('FUT', 'PRE')
 )
 SELECT
     gs.game_id,
