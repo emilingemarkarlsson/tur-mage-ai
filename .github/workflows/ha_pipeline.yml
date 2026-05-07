@@ -1,0 +1,26 @@
+name: HA Daily Transform
+
+on:
+  schedule:
+    # 09:30 UTC = 11:30 Stockholm – 30 min efter SHL, 1.5h efter Crawlab-scrapern
+    - cron: "30 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-ha-transform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run ha_transform pipeline
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+        run: |
+          python3 -m venv /tmp/ha_venv
+          /tmp/ha_venv/bin/pip install -q duckdb pandas
+          /tmp/ha_venv/bin/python3 scripts/run_ha_pipeline.py
