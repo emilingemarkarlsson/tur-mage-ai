@@ -1,0 +1,72 @@
+blocks:
+- all_upstream_blocks_executed: true
+  color: null
+  configuration: {}
+  downstream_blocks:
+  - shl_fact_goalie_game
+  executor_config: null
+  executor_type: local_python
+  has_callback: false
+  language: python
+  name: shl_fact_player_game
+  retry_config: null
+  status: updated
+  timeout: null
+  type: transformer
+  upstream_blocks: []
+  uuid: shl_fact_player_game
+- all_upstream_blocks_executed: true
+  color: null
+  configuration: {}
+  downstream_blocks:
+  - shl_fact_team_game
+  executor_config: null
+  executor_type: local_python
+  has_callback: false
+  language: python
+  name: shl_fact_goalie_game
+  retry_config: null
+  status: updated
+  timeout: null
+  type: transformer
+  upstream_blocks:
+  - shl_fact_player_game
+  uuid: shl_fact_goalie_game
+- all_upstream_blocks_executed: true
+  color: null
+  configuration: {}
+  downstream_blocks:
+  - shl_dim_standings
+  executor_config: null
+  executor_type: local_python
+  has_callback: false
+  language: python
+  name: shl_fact_team_game
+  retry_config: null
+  status: updated
+  timeout: null
+  type: transformer
+  upstream_blocks:
+  - shl_fact_goalie_game
+  uuid: shl_fact_team_game
+- all_upstream_blocks_executed: true
+  color: null
+  configuration: {}
+  downstream_blocks: []
+  executor_config: null
+  executor_type: local_python
+  has_callback: false
+  language: python
+  name: shl_dim_standings
+  retry_config: null
+  status: updated
+  timeout: null
+  type: transformer
+  upstream_blocks:
+  - shl_fact_team_game
+  uuid: shl_dim_standings
+description: Transformerar SHL rådata (shl_analytics.raw.*) till analytics-tabeller (shl_analytics.analytics.*). Körs dagligen 09:00 UTC (11:00 Stockholm), 1h efter Crawlab-scrapern.
+name: shl_transform
+tags: []
+type: python
+uuid: shl_transform

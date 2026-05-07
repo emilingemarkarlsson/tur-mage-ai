@@ -1,0 +1,27 @@
+name: SHL Daily Transform
+
+on:
+  schedule:
+    # 09:00 UTC = 11:00 Stockholm – 1h efter Crawlab-scrapern (08:00 UTC / 10:00 Stockholm)
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    # Manuell trigger för felsökning
+
+jobs:
+  run-shl-transform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run shl_transform pipeline
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+        run: |
+          python3 -m venv /tmp/shl_venv
+          /tmp/shl_venv/bin/pip install -q duckdb pandas
+          /tmp/shl_venv/bin/python3 scripts/run_shl_pipeline.py
