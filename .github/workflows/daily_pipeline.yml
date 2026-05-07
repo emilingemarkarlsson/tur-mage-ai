@@ -2,13 +2,35 @@ name: NHL Daily Pipeline
 
 on:
   schedule:
-    # Varje dag 07:00 UTC – analytics_pipeline körs alltid.
-    # dimensions/seasonal/games körs av Mage AI-instansen (mage.theunnamedroads.com).
+    # 07:00 UTC dagligen – analytics + SUI körs (SUI hoppar över om ingen ny data)
+    # dimensions/seasonal/games/swe körs av Mage AI-instansen på Hetzner
     - cron: "0 7 * * *"
   workflow_dispatch:
-    # Manuell trigger – kör analytics direkt (t.ex. vid felsökning).
+    # Manuell trigger – kör båda jobben direkt (t.ex. vid felsökning)
 
 jobs:
+  run-sui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run sui_to_motherduck pipeline
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+          MINIO_ENDPOINT: https://minio-api.thehockeyanalytics.com
+          MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+        run: |
+          python3 -m venv /tmp/sui_venv
+          /tmp/sui_venv/bin/pip install -q boto3 pandas duckdb
+          # Kör med --max-age-hours 25: hoppar över om Crawlab inte körde idag
+          /tmp/sui_venv/bin/python3 scripts/run_sui_pipeline.py --max-age-hours 25
+
   run-analytics:
     runs-on: ubuntu-latest
     timeout-minutes: 30
