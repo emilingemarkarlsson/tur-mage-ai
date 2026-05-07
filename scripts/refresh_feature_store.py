@@ -275,7 +275,16 @@ def refresh_feature_store() -> None:
         print("[feature_store] MOTHERDUCK_TOKEN not set – skipping refresh")
         return
     db = os.getenv("MOTHERDUCK_DATABASE_NAME", "nhl").strip() or "nhl"
-    conn = duckdb.connect(f"md:{db}?motherduck_token={token}")
+
+    # Use INSTALL/LOAD extension pattern (no Python motherduck package needed,
+    # compatible with any DuckDB version MotherDuck supports).
+    os.environ["motherduck_token"] = token
+    conn = duckdb.connect(":memory:")
+    conn.execute("INSTALL motherduck")
+    conn.execute("LOAD motherduck")
+    conn.execute(f"ATTACH 'md:{db}'")
+    conn.execute(f'USE "{db}"')
+
     try:
         for name, sql in _TABLES.items():
             try:

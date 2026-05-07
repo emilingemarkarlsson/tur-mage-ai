@@ -52,10 +52,8 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # mage-ai drar in duckdb 1.5.x; MotherDuck kräver <=1.2.x.
-          # Installera duckdb först, sedan motherduck med --no-deps.
+          # refresh_feature_store.py uses INSTALL/LOAD motherduck extension –
+          # no Python motherduck package needed, works with any supported DuckDB.
           python3 -m venv /tmp/analytics_venv
-          /tmp/analytics_venv/bin/pip install -q openai python-dotenv pandas
-          /tmp/analytics_venv/bin/pip install -q "duckdb==1.2.2"
-          /tmp/analytics_venv/bin/pip install -q --no-deps motherduck
+          /tmp/analytics_venv/bin/pip install -q openai python-dotenv pandas duckdb
           /tmp/analytics_venv/bin/python3 scripts/run_analytics_pipeline.py
