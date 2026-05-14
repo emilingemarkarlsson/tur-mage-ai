@@ -1,0 +1,65 @@
+name: NOR Daily Scrape & Load
+
+on:
+  schedule:
+    # 08:30 UTC = 10:30 Stockholm – efter NHL-pipelinen (07:00-07:15)
+    # Matcher spelas typiskt kvällstid, data finns morgonen efter
+    # Säsong: september–april (EHL). Kan aktiveras/pausas manuellt.
+    - cron: "30 8 * * *"
+  workflow_dispatch:
+    inputs:
+      load_only:
+        description: "Bara S3 → MotherDuck (hoppa över skrapning)"
+        type: boolean
+        default: false
+
+jobs:
+  run-nor-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python3 -m venv /tmp/nor_venv
+          /tmp/nor_venv/bin/pip install -q \
+            duckdb \
+            pandas \
+            pyarrow \
+            boto3 \
+            requests \
+            python-dotenv
+
+      - name: Run NOR pipeline (full)
+        if: ${{ !inputs.load_only }}
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+          HETZNER_ACCESS_KEY: ${{ secrets.HETZNER_ACCESS_KEY }}
+          HETZNER_SECRET_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
+          HETZNER_ENDPOINT: ${{ secrets.HETZNER_ENDPOINT }}
+          HETZNER_REGION: ${{ secrets.HETZNER_REGION }}
+          NOR_API_BASE_URL: ${{ secrets.NOR_API_BASE_URL }}
+          NOR_API_KEY: ${{ secrets.NOR_API_KEY }}
+        run: |
+          /tmp/nor_venv/bin/python3 scripts/run_nor_pipeline.py
+
+      - name: Run NOR pipeline (load-only)
+        if: ${{ inputs.load_only }}
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+          HETZNER_ACCESS_KEY: ${{ secrets.HETZNER_ACCESS_KEY }}
+          HETZNER_SECRET_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
+          HETZNER_ENDPOINT: ${{ secrets.HETZNER_ENDPOINT }}
+          HETZNER_REGION: ${{ secrets.HETZNER_REGION }}
+        run: |
+          /tmp/nor_venv/bin/python3 scripts/run_nor_pipeline.py --load-only
