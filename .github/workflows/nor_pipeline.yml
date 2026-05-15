@@ -12,6 +12,10 @@ on:
         description: "Bara S3 → MotherDuck (hoppa över skrapning)"
         type: boolean
         default: false
+      year:
+        description: "Säsongsår att skrapa (t.ex. 2026). Tom = innevarande säsong."
+        type: string
+        default: ""
 
 jobs:
   run-nor-pipeline:
@@ -48,10 +52,15 @@ jobs:
           HETZNER_SECRET_KEY: ${{ secrets.HETZNER_SECRET_KEY }}
           HETZNER_ENDPOINT: ${{ secrets.HETZNER_ENDPOINT }}
           HETZNER_REGION: ${{ secrets.HETZNER_REGION }}
-          NOR_API_BASE_URL: ${{ secrets.NOR_API_BASE_URL }}
-          NOR_API_KEY: ${{ secrets.NOR_API_KEY }}
+          # Wisehockey tracking credentials (valfritt – krävs för shifts/momentum)
+          # NOR_WISE_API_KEY: ${{ secrets.NOR_WISE_API_KEY }}
+          # NOR_WISE_BEARER: ${{ secrets.NOR_WISE_BEARER }}
         run: |
-          /tmp/nor_venv/bin/python3 scripts/run_nor_pipeline.py
+          YEAR_ARG=""
+          if [ -n "${{ inputs.year }}" ]; then
+            YEAR_ARG="--year ${{ inputs.year }}"
+          fi
+          /tmp/nor_venv/bin/python3 scripts/run_nor_pipeline.py $YEAR_ARG
 
       - name: Run NOR pipeline (load-only)
         if: ${{ inputs.load_only }}

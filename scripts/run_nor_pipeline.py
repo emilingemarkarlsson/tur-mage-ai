@@ -216,15 +216,13 @@ def get_known_match_ids(conn) -> set[int]:
 # Pipeline steg
 # ---------------------------------------------------------------------------
 
-def step_scrape(known_ids: set[int]) -> dict:
+def step_scrape(known_ids: set[int], tournament_year: int | None = None) -> dict:
     """Kör skraparen och returnerar nya DataFrames."""
     from nor_scraper import scrape_new_matches  # type: ignore
 
-    if not os.environ.get("NOR_API_BASE_URL", "").strip():
-        raise SystemExit("[nor] NOR_API_BASE_URL saknas – kan inte skrapa")
-
-    print(f"[nor] Skrapar nya matcher (redan kända: {len(known_ids)})...")
-    return scrape_new_matches(known_ids)
+    print(f"[nor] Skrapar nya matcher (redan kända: {len(known_ids)}, "
+          f"år={tournament_year or 'auto'})...")
+    return scrape_new_matches(known_ids, tournament_year=tournament_year)
 
 
 def step_upload(data: dict, s3) -> list[int]:
@@ -288,6 +286,8 @@ def main():
     parser.add_argument("--load-only", action="store_true", help="Bara S3 → MotherDuck")
     parser.add_argument("--scrape-only", action="store_true", help="Bara skrapa (ingen MD-load)")
     parser.add_argument("--force", action="store_true", help="Kör även utan nya matcher")
+    parser.add_argument("--year", type=int, default=None,
+                        help="Säsong att skrapa (t.ex. 2026). Default: innevarande säsong.")
     args = parser.parse_args()
 
     t0 = time.time()
@@ -305,12 +305,8 @@ def main():
     known_ids = get_known_match_ids(conn)
     print(f"[nor] {len(known_ids)} matcher redan i MotherDuck")
 
-    # Skrapa
-    if not args.scrape_only:
-        pass  # conn används nedan
-
     try:
-        data = step_scrape(known_ids)
+        data = step_scrape(known_ids, tournament_year=args.year)
     except SystemExit as e:
         print(e)
         conn.close()

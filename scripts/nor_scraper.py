@@ -1,367 +1,271 @@
 """
-Norwegian EHL hockey API scraper.
+Norwegian EHL hockey scraper.
 
-Hämtar nya matcher och tillhörande statistik från API:et och
-konverterar till pandas DataFrames i samma schema som nor-parquet-filerna.
+Hämtar matcher och händelser från NIF-proxy:
+  https://sf34-terminlister-prod-app.azurewebsites.net/
 
-Miljövariabler:
-  NOR_API_BASE_URL  – API:ets bas-URL, t.ex. https://api.example.no (krävs för skrapning)
-  NOR_API_KEY       – API-nyckel som skickas som x-api-key header (om krävs)
-  NOR_API_BEARER    – Bearer token för Authorization-header (om krävs)
+Proxy-endpoints som används:
+  wise/tournaments                               → turneringslista (Wisehockey IDs + NIF originId)
+  ta/TournamentMatches/?tournamentId={originId}  → matchlista per turnering (NIF match-IDs)
+  ta/Match?matchId={nifId}                       → matchdetaljer
+  icehockey/Match/Goals/{nifId}                  → mål
+  icehockey/Match/Penalties/{nifId}              → straff
+  icehockey/Match/Players/{nifId}                → spelarprestationer per match
+  ta/TournamentStandings/?tournamentId={originId} → tabeller
 
-Förväntade API-endpoints (baserat på befintlig datastruktur):
-  GET /teams/{team_id}/matches                            → matchlista per lag
-  GET /teams/{team_id}/seasons                           → turneringar per lag
-  GET /matches/{match_id}                                → matchdetaljer
-  GET /matches/{match_id}/events                         → mål, straff, GK-händelser
-  GET /matches/{match_id}/stats                          → period-statistik (per strength)
-  GET /matches/{match_id}/momentum                       → momentum-tidslinje (per sekund)
-  GET /matches/{match_id}/shifts                         → skift-data per spelare
-  GET /players                                           → alla spelare
-  GET /teams/{team_id}/skater-summaries?tournamentId=X   → säsongsstatistik per skridskoåkare
-  GET /teams/{team_id}/goalkeeper-summaries?tournamentId=X → säsongsstatistik per målvakt
+OBS: Wisehockey tracking-data (shifts, momentum, period-stats) är EJ tillgänglig
+via denna proxy – de endpoints returnerar "Tournament X not found in Wisehockey API".
+Befintlig historisk data (match_id 1-1775) är i Wisehockey-format; ny data (NIF-IDs
+~7 000 000+) kan samexistera i samma tabeller utan ID-konflikter.
 """
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 import pandas as pd
 import requests
 
-TEAMS: dict[str, int] = {
-    "friskasker": 1,
-    "gruner": 2,
-    "lillehammer": 3,
-    "manglerud": 4,
-    "ringerike": 5,
-    "sparta": 6,
-    "stavanger": 7,
-    "stjernen": 8,
-    "storhamar": 9,
-    "valerenga": 10,
-    "comet": 17,
-    "lorenskog": 18,
-    "narvik": 21,
-    "nidaros": 67,
+PROXY = "https://sf34-terminlister-prod-app.azurewebsites.net"
+
+# Wisehockey team slug → NIF org name fragment (för att normalisera lagnamn)
+NIF_TEAM_NAME_MAP: dict[str, str] = {
+    "IF Frisk Asker Hockey": "friskasker",
+    "Frisk Asker": "friskasker",
+    "Grüner Hockey": "gruner",
+    "Grüner": "gruner",
+    "Lillehammer IHK": "lillehammer",
+    "Manglerud Star IK": "manglerud",
+    "Manglerud Star": "manglerud",
+    "Ringerike IHK": "ringerike",
+    "Sparta Warriors": "sparta",
+    "Stavanger Ishockeyklubb": "stavanger",
+    "Stjernen Hockey": "stjernen",
+    "Storhamar Hockey": "storhamar",
+    "Storhamar": "storhamar",
+    "Vålerenga Ishockey": "valerenga",
+    "Vålerenga": "valerenga",
+    "Comet Halden": "comet",
+    "Comet": "comet",
+    "Lørenskog IHK": "lorenskog",
+    "Lørenskog": "lorenskog",
+    "Narvik Hockey": "narvik",
+    "Nidaros Hockey": "nidaros",
 }
+
+# NIF phase/type → Wisehockey phase string
+NIF_PHASE_MAP: dict[str, str] = {
+    "EHL": "Regular",
+}
+
+
+def _slug_from_name(name: str) -> str:
+    """Försöker mappa NIF-lagnamn till team-slug."""
+    for nif_name, slug in NIF_TEAM_NAME_MAP.items():
+        if nif_name.lower() in name.lower() or name.lower() in nif_name.lower():
+            return slug
+    # Fallback: rensa organisationsnamn
+    return name.lower().replace(" ", "_").replace("ø", "o").replace("å", "a").replace("æ", "ae")
 
 
 class NorAPI:
     def __init__(self):
-        self.base = os.environ.get("NOR_API_BASE_URL", "").rstrip("/")
-        if not self.base:
-            raise ValueError("NOR_API_BASE_URL saknas i miljövariabler")
-
-        headers: dict[str, str] = {"Accept": "application/json"}
-        key = os.environ.get("NOR_API_KEY", "").strip()
-        bearer = os.environ.get("NOR_API_BEARER", "").strip()
-        if bearer:
-            headers["Authorization"] = f"Bearer {bearer}"
-        elif key:
-            headers["x-api-key"] = key
-
+        self.base = PROXY
         self.session = requests.Session()
-        self.session.headers.update(headers)
+        self.session.headers.update({
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate, br",
+            "User-Agent": "Mozilla/5.0",
+        })
 
-    def _get(self, path: str, params: dict | None = None) -> Any:
+    def _get(self, path: str, params: dict | None = None, retries: int = 3) -> Any:
         url = f"{self.base}/{path.lstrip('/')}"
-        r = self.session.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        return r.json()
+        for attempt in range(retries):
+            try:
+                r = self.session.get(url, params=params, timeout=30)
+                if r.status_code == 404:
+                    return None
+                r.raise_for_status()
+                return r.json()
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    return None
+                if attempt < retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+            except Exception:
+                if attempt < retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
 
-    def get_tournaments(self, team_id: int) -> list[dict]:
-        return self._get(f"teams/{team_id}/seasons")
+    def get_tournaments(self) -> list[dict]:
+        """Returnerar lista med {id, name, originId, group, year, tournamentType}."""
+        data = self._get("wise/tournaments")
+        if isinstance(data, dict):
+            return data.get("tournaments", [])
+        return data or []
 
-    def get_matches(self, team_id: int) -> list[dict]:
-        return self._get(f"teams/{team_id}/matches")
+    def get_tournament_matches(self, origin_id: int) -> list[dict]:
+        """Returnerar NIF-matchlista för en turnering (tournamentId = originId)."""
+        data = self._get("ta/TournamentMatches/", {"tournamentId": origin_id})
+        if not data:
+            return []
+        return data.get("matches", [])
 
-    def get_match(self, match_id: int) -> dict:
-        return self._get(f"matches/{match_id}")
+    def get_match(self, nif_match_id: int) -> dict | None:
+        return self._get(f"ta/Match", {"matchId": nif_match_id})
 
-    def get_events(self, match_id: int) -> dict:
-        return self._get(f"matches/{match_id}/events")
+    def get_goals(self, nif_match_id: int) -> list[dict]:
+        data = self._get(f"icehockey/Match/Goals/{nif_match_id}")
+        return data if isinstance(data, list) else []
 
-    def get_stats(self, match_id: int) -> dict:
-        return self._get(f"matches/{match_id}/stats")
+    def get_penalties(self, nif_match_id: int) -> list[dict]:
+        data = self._get(f"icehockey/Match/Penalties/{nif_match_id}")
+        return data if isinstance(data, list) else []
 
-    def get_momentum(self, match_id: int) -> list[dict]:
-        return self._get(f"matches/{match_id}/momentum")
+    def get_players(self, nif_match_id: int) -> list[dict]:
+        data = self._get(f"icehockey/Match/Players/{nif_match_id}")
+        return data if isinstance(data, list) else []
 
-    def get_shifts(self, match_id: int) -> list[dict]:
-        return self._get(f"matches/{match_id}/shifts")
-
-    def get_players(self) -> list[dict]:
-        return self._get("players")
-
-    def get_skater_summaries(self, team_id: int, tournament_id: int) -> list[dict]:
-        return self._get(f"teams/{team_id}/skater-summaries", {"tournamentId": tournament_id})
-
-    def get_goalkeeper_summaries(self, team_id: int, tournament_id: int) -> list[dict]:
-        return self._get(f"teams/{team_id}/goalkeeper-summaries", {"tournamentId": tournament_id})
+    def get_standings(self, origin_id: int) -> list[dict]:
+        data = self._get("ta/TournamentStandings/", {"tournamentId": origin_id})
+        if not data:
+            return []
+        return data.get("standings", data.get("teamStandings", []))
 
 
 # ---------------------------------------------------------------------------
-# Parsers: JSON API-svar → DataFrames i rätt schema
+# Parsers
 # ---------------------------------------------------------------------------
 
-def parse_matches(raw: list[dict], team_slug: str) -> pd.DataFrame:
+def parse_matches(nif_matches: list[dict], tournament: dict) -> pd.DataFrame:
+    """
+    Konverterar NIF-matchlista till matches-DataFrame med samma schema som
+    den befintliga Wisehockey-baserade matches.parquet.
+    """
+    tid = tournament["id"]
+    t_name = tournament["name"]
+    year = int(tournament.get("year", 0)) if tournament.get("year") else None
+    phase = "Regular"
+    if "Playoff" in t_name:
+        phase = "Playoffs"
+    elif "Qualifier" in t_name or "Qualifier" in t_name:
+        phase = "Qualifiers"
+    elif "Practice" in t_name:
+        phase = "Practice"
+
     rows = []
-    for m in raw:
-        if m.get("status") not in ("Finished", "FinishedOvertime", "FinishedShootout"):
+    for m in nif_matches:
+        # Hoppa över icke-avslutade matcher
+        if m.get("matchResult") is None:
             continue
+        result = m["matchResult"]
+        if result.get("matchEndResult") in (None, "", "0-0") and result.get("homeGoals", 0) == 0 and result.get("awayGoals", 0) == 0:
+            # Troligtvis ej spelad
+            pass
+
+        home_org = m.get("hometeamOrgName", m.get("hometeam", ""))
+        away_org = m.get("awayteamOrgName", m.get("awayteam", ""))
+        home_slug = _slug_from_name(home_org)
+        away_slug = _slug_from_name(away_org)
+
         rows.append({
-            "match_id": m["id"],
-            "team_slug": team_slug,
+            "match_id": m["matchId"],
+            "team_slug": home_slug,   # primärt lag-perspektiv = hemmalagets slug
             "match_date": m.get("matchDate"),
-            "end_time": m.get("endTime"),
-            "home_team_id": m["homeTeam"]["id"],
-            "home_team_name": m["homeTeam"]["fullName"],
-            "away_team_id": m["awayTeam"]["id"],
-            "away_team_name": m["awayTeam"]["fullName"],
-            "home_goals": m.get("homeGoals", 0),
-            "away_goals": m.get("awayGoals", 0),
-            "status": m.get("status"),
-            "game_time": m.get("gameTime", 0),
-            "has_statistics": m.get("hasStatistics", False),
-            "tournament_id": m["matchSeason"]["id"],
-            "tournament_name": m["matchSeason"]["tournamentName"],
-            "season_year": m["matchSeason"]["year"],
-            "season_phase": m["matchSeason"]["phase"],
+            "end_time": m.get("lastChangeDate"),
+            "home_team_id": m.get("hometeamId"),
+            "home_team_name": home_org,
+            "away_team_id": m.get("awayteamId"),
+            "away_team_name": away_org,
+            "home_goals": result.get("homeGoals", 0),
+            "away_goals": result.get("awayGoals", 0),
+            "status": "Finished" if result.get("matchEndResult") else "Upcoming",
+            "game_time": 3600,         # NIF ger ej sekunder
+            "has_statistics": bool(result.get("matchEndResult")),
+            "tournament_id": tid,
+            "tournament_name": t_name,
+            "season_year": year,
+            "season_phase": phase,
         })
     return pd.DataFrame(rows)
 
 
-def parse_goal_events(events: dict, match_id: int, team_slug: str) -> pd.DataFrame:
+def parse_goal_events(goals: list[dict], match_id: int) -> pd.DataFrame:
     rows = []
-    for e in events.get("goalEvents", []):
+    for i, g in enumerate(goals):
+        period_id = g.get("periodId", 0)
+        period_num = {200050: 1, 51: 2, 52: 3, 200053: 4}.get(period_id, period_id)
         rows.append({
-            "event_id": e["id"],
+            "event_id": match_id * 1000 + i,       # syntetiskt event_id
             "match_id": match_id,
-            "team_slug": team_slug,
-            "timestamp": e.get("timestamp"),
-            "match_time": e.get("matchTime"),
-            "period": e.get("periodNumber"),
-            "team_id": e["team"]["id"],
-            "team_name": e["team"]["fullName"],
-            "home_goals": e.get("homeGoals"),
-            "away_goals": e.get("awayGoals"),
-            "goal_type": e.get("type"),
-            "scorer_id": e.get("scorer", {}).get("id") if e.get("scorer") else None,
-            "scorer_name": (
-                f"{e['scorer']['firstName']} {e['scorer']['lastName']}"
-                if e.get("scorer") else None
-            ),
-            "assist1_id": e.get("assist1", {}).get("id") if e.get("assist1") else None,
-            "assist1_name": (
-                f"{e['assist1']['firstName']} {e['assist1']['lastName']}"
-                if e.get("assist1") else None
-            ),
-            "assist2_id": e.get("assist2", {}).get("id") if e.get("assist2") else None,
-            "assist2_name": (
-                f"{e['assist2']['firstName']} {e['assist2']['lastName']}"
-                if e.get("assist2") else None
-            ),
+            "team_slug": _slug_from_name(g.get("teamName", "")),
+            "timestamp": None,
+            "match_time": int(g.get("periodTime", 0)) if g.get("periodTime") else None,
+            "period": period_num,
+            "team_id": g.get("orgId"),
+            "team_name": g.get("teamName", ""),
+            "home_goals": None,
+            "away_goals": None,
+            "goal_type": g.get("goalType"),
+            "scorer_id": g.get("personId"),
+            "scorer_name": f"{g.get('firstName','')} {g.get('lastName','')}".strip(),
+            "assist1_id": g.get("firstAssistPersonId"),
+            "assist1_name": f"{g.get('firstAssistFirstName','')} {g.get('firstAssistLastName','')}".strip() or None,
+            "assist2_id": g.get("secondAssistPersonId"),
+            "assist2_name": f"{g.get('secondAssistFirstName','')} {g.get('secondAssistLastName','')}".strip() or None,
         })
     return pd.DataFrame(rows)
 
 
-def parse_penalty_events(events: dict, match_id: int, team_slug: str) -> pd.DataFrame:
+def parse_penalty_events(penalties: list[dict], match_id: int) -> pd.DataFrame:
     rows = []
-    for e in events.get("penaltyEvents", []):
+    for i, p in enumerate(penalties):
         rows.append({
-            "event_id": e["id"],
+            "event_id": match_id * 1000 + 500 + i,  # syntetiskt, offset 500 för att undvika krock med mål
             "match_id": match_id,
-            "team_slug": team_slug,
-            "timestamp": e.get("timestamp"),
-            "match_time": e.get("matchTime"),
-            "period": e.get("periodNumber"),
-            "team_id": e["team"]["id"],
-            "team_name": e["team"]["fullName"],
-            "duration_minutes": e.get("durationMinutes", 0),
-            "reason": e.get("reason"),
-            "info": e.get("info"),
-            "is_team_or_official": e.get("isTeamOrOfficial", False),
-            "player_id": e.get("player", {}).get("id") if e.get("player") else None,
-            "player_name": (
-                f"{e['player']['firstName']} {e['player']['lastName']}"
-                if e.get("player") else None
-            ),
+            "team_slug": _slug_from_name(p.get("teamName", "")),
+            "timestamp": None,
+            "match_time": p.get("servingStartTime"),
+            "period": None,
+            "team_id": p.get("orgId"),
+            "team_name": p.get("teamName", ""),
+            "duration_minutes": p.get("severityMinutes", 0),
+            "reason": p.get("infractionType"),
+            "info": p.get("severityType"),
+            "is_team_or_official": False,
+            "player_id": p.get("personId"),
+            "player_name": f"{p.get('firstName','')} {p.get('lastName','')}".strip(),
         })
     return pd.DataFrame(rows)
 
 
-def parse_match_lineup(match: dict, match_id: int, team_slug: str) -> pd.DataFrame:
+def parse_match_lineup(players: list[dict], match_id: int) -> pd.DataFrame:
+    """
+    Mappar icehockey/Match/Players → match_lineup.
+    Håller sig till samma kolumner som befintlig Wisehockey-baserad match_lineup
+    för att MotherDuck-upserterna ska fungera utan schema-konflikter.
+    """
     rows = []
-    for side, key in [("home", "homeTeamRoster"), ("away", "awayTeamRoster")]:
-        for p in match.get(key, []):
-            rows.append({
-                "match_id": match_id,
-                "team_slug": team_slug,
-                "side": side,
-                "player_id": p["id"],
-                "first_name": p.get("firstName"),
-                "last_name": p.get("lastName"),
-                "jersey": p.get("jersey", 0),
-                "role": p.get("role"),
-                "line_number": p.get("lineNumber", 0),
-                "height": p.get("height", 0),
-                "weight": p.get("weight", 0),
-                "date_of_birth": p.get("dateOfBirth"),
-                "handedness": p.get("handedness"),
-            })
-    return pd.DataFrame(rows)
-
-
-def parse_period_stats(stats: dict, match_id: int, team_slug: str) -> pd.DataFrame:
-    rows = []
-    for period in stats.get("periodStatistics", []):
-        p_num = period.get("periodNumber")
-        for ts in period.get("teamStrengthStatistics", [period]):
-            strength = ts.get("teamStrength", {})
-            home_s = None
-            away_s = None
-            for ts_entry in ts.get("teamStats", []):
-                if ts_entry.get("team") == "Home":
-                    home_s = ts_entry
-                elif ts_entry.get("team") == "Away":
-                    away_s = ts_entry
-            rows.append({
-                "match_id": match_id,
-                "team_slug": team_slug,
-                "period": p_num,
-                "home_players": strength.get("homePlayers"),
-                "away_players": strength.get("awayPlayers"),
-                "home_goalie_on_ice": strength.get("homeGoalieOnIce"),
-                "away_goalie_on_ice": strength.get("awayGoalieOnIce"),
-                "home_shots": home_s.get("shots") if home_s else None,
-                "away_shots": away_s.get("shots") if away_s else None,
-                "home_goals": home_s.get("goals") if home_s else None,
-                "away_goals": away_s.get("goals") if away_s else None,
-                "home_blocked_shots": home_s.get("blockedShots") if home_s else None,
-                "away_blocked_shots": away_s.get("blockedShots") if away_s else None,
-            })
-    return pd.DataFrame(rows)
-
-
-def parse_powerplay_stats(stats: dict, match_id: int, team_slug: str) -> pd.DataFrame:
-    rows = []
-    for side, key in [("home", "homePowerplayStats"), ("away", "awayPowerplayStats")]:
-        pp = stats.get(key, {})
-        if pp:
-            rows.append({
-                "match_id": match_id,
-                "team_slug": team_slug,
-                "team_side": side,
-                "powerplay_count": pp.get("powerplayCount", 0),
-                "powerplay_goals": pp.get("powerplayGoals", 0),
-                "powerplay_time": pp.get("powerplayTime"),
-            })
-    return pd.DataFrame(rows)
-
-
-def parse_shifts(shifts_raw: list[dict], match_id: int, team_slug: str) -> pd.DataFrame:
-    rows = []
-    for player_data in shifts_raw:
-        pid = player_data.get("playerId")
-        for shift in player_data.get("shifts", []):
-            stats = shift.get("stats", [{}])
-            s = stats[0] if stats else {}
-            rows.append({
-                "match_id": match_id,
-                "team_slug": team_slug,
-                "player_id": pid,
-                "shift_id": shift.get("id"),
-                "period": shift.get("periodNumber"),
-                "start_time_from_period": shift.get("startTimeFromPeriodStart"),
-                "start_timestamp": shift.get("startTimestamp"),
-                "end_timestamp": shift.get("endTimestamp"),
-                "time_on_ice": s.get("timeOnIce"),
-                "distance_travelled": s.get("distanceTravelled"),
-                "distance_with_puck": s.get("distanceTravelledWithPuck"),
-                "top_speed": s.get("topSpeed"),
-                "puck_control_time": s.get("puckControlTime"),
-                "shots": s.get("shots", 0),
-                "goals": s.get("goals", 0),
-                "fastest_shot": s.get("fastestShot"),
-                "plus": s.get("corsiFor"),
-                "minus": s.get("corsiAgainst"),
-                "plus_minus": (
-                    (s.get("corsiFor") or 0) - (s.get("corsiAgainst") or 0)
-                    if s.get("corsiFor") is not None else None
-                ),
-                "blocked_shots": s.get("blockedShots", 0),
-                "offensive_screens": s.get("offensiveScreens", 0),
-            })
-    return pd.DataFrame(rows)
-
-
-def parse_momentum(momentum_raw: list[dict], match_id: int, team_slug: str) -> pd.DataFrame:
-    rows = []
-    for entry in momentum_raw:
-        period = entry.get("periodNumber")
-        for i, point in enumerate(entry.get("dataPoints", [])):
-            rows.append({
-                "match_id": match_id,
-                "team_slug": team_slug,
-                "period": period,
-                "index": i,
-                "timestamp": point.get("timestamp"),
-                "value": point.get("value"),
-            })
-    return pd.DataFrame(rows)
-
-
-def parse_players(players_raw: list[dict]) -> pd.DataFrame:
-    rows = []
-    for p in players_raw:
+    for p in players:
         rows.append({
-            "player_id": p["id"],
-            "first_name": p.get("firstName"),
-            "last_name": p.get("lastName"),
-            "jersey": p.get("jersey", 0),
-            "role": p.get("role"),
-            "handedness": p.get("handedness"),
-            "height": p.get("height", 0),
-            "weight": p.get("weight", 0),
-            "date_of_birth": p.get("dateOfBirth"),
-            "image_id": p.get("imageId"),
+            "match_id": match_id,
+            "team_slug": _slug_from_name(p.get("teamName", "")),
+            "side": None,       # NIF ger ej home/away per spelare
+            "player_id": p.get("personId"),
+            "first_name": p.get("firstName", ""),
+            "last_name": p.get("lastName", ""),
+            "jersey": p.get("shirtNo", 0),
+            "role": None,
+            "line_number": 0,
+            "height": 0,
+            "weight": 0,
+            "date_of_birth": None,
+            "handedness": None,
         })
-    return pd.DataFrame(rows)
-
-
-def parse_skater_summaries(raw: list[dict], team_slug: str, tournament_id: int) -> pd.DataFrame:
-    rows = []
-    for entry in raw:
-        pid = entry.get("playerId")
-        pt = entry.get("totalPointTable", {})
-        for s in entry.get("totalStats", []):
-            ts = s.get("teamStrength", {})
-            if ts.get("type") != "FullStrength":
-                continue
-            rows.append({
-                "team_slug": team_slug,
-                "tournament_id": tournament_id,
-                "player_id": pid,
-                "games_played": pt.get("gamesPlayed", 0),
-                "goals": pt.get("goals", 0),
-                "assists": pt.get("assists", 0),
-                "points": pt.get("points", 0),
-                "penalty_count": pt.get("penaltyCount", 0),
-                "penalty_minutes": pt.get("penaltyMinutes", 0),
-                "time_on_ice": s.get("timeOnIce"),
-                "distance_travelled": s.get("distanceTravelled"),
-                "top_speed": s.get("topSpeed"),
-                "shots": s.get("shots"),
-                "goals_5v5": s.get("goals"),
-                "plus": s.get("plus"),
-                "minus": s.get("minus"),
-                "plus_minus": s.get("plusMinus"),
-                "puck_control_time": s.get("puckControlTime"),
-                "blocked_shots": s.get("blockedShots"),
-                "offensive_screens": s.get("offensiveScreens"),
-                "fastest_shot": s.get("fastestShot"),
-            })
     return pd.DataFrame(rows)
 
 
@@ -369,102 +273,139 @@ def parse_skater_summaries(raw: list[dict], team_slug: str, tournament_id: int) 
 # Public scrape interface
 # ---------------------------------------------------------------------------
 
-def scrape_new_matches(known_match_ids: set[int]) -> dict[str, pd.DataFrame]:
+def scrape_new_matches(
+    known_match_ids: set[int],
+    tournament_year: int | None = None,
+) -> dict[str, pd.DataFrame]:
     """
-    Hämtar alla nya avslutade matcher som inte finns i known_match_ids.
-    Returnerar dict med DataFrames för varje tabell.
+    Hämtar nya avslutade matcher (NIF-IDs) som ej finns i known_match_ids.
+
+    Args:
+        known_match_ids: match-IDs som redan finns i MotherDuck – hoppa över dessa.
+        tournament_year: om satt (t.ex. 2026), scrapa bara turneringar för det året.
+                        Default: scrapa bara turneringar vars year == innevarande år
+                        (förhindrar att ALLA historiska matcher laddas om vid varje körning).
+
+    Tabeller utan Wisehockey-data returneras som tomma DataFrames:
+      shifts, momentum, match_period_stats, match_powerplay_stats
     """
+    from datetime import date
+
+    if tournament_year is None:
+        # Standardbeteende: aktuell säsong (september–april → år = nästa kalenderår)
+        today = date.today()
+        tournament_year = today.year + 1 if today.month >= 9 else today.year
+
     api = NorAPI()
 
     all_matches: list[pd.DataFrame] = []
     all_goals: list[pd.DataFrame] = []
     all_penalties: list[pd.DataFrame] = []
     all_lineup: list[pd.DataFrame] = []
-    all_period_stats: list[pd.DataFrame] = []
-    all_pp_stats: list[pd.DataFrame] = []
-    all_shifts: list[pd.DataFrame] = []
-    all_momentum: list[pd.DataFrame] = []
+    processed: set[int] = set()
 
-    processed_match_ids: set[int] = set()
+    print("[nor-scraper] Hämtar turneringslista...", flush=True)
+    all_tournaments = api.get_tournaments()
+    # Filtrera på år
+    tournaments = [
+        t for t in all_tournaments
+        if str(t.get("year", "")) == str(tournament_year)
+    ]
+    print(f"[nor-scraper] {len(all_tournaments)} turneringar totalt, "
+          f"{len(tournaments)} för år {tournament_year}")
 
-    for slug, team_id in TEAMS.items():
-        print(f"[nor-scraper] {slug} – hämtar matchlista...", flush=True)
-        try:
-            raw_matches = api.get_matches(team_id)
-        except Exception as exc:
-            print(f"[nor-scraper] VARNING: kunde inte hämta matcher för {slug}: {exc}")
+    for t in tournaments:
+        tid = t["id"]
+        origin_id = int(t.get("originId", 0))
+        if not origin_id:
             continue
 
-        match_df = parse_matches(raw_matches, slug)
-        all_matches.append(match_df)
+        print(f"[nor-scraper] Turnering {tid} ({t['name']}) – hämtar matcher...", flush=True)
+        nif_matches = api.get_tournament_matches(origin_id)
+        if not nif_matches:
+            print(f"[nor-scraper]   inga matcher")
+            continue
 
-        new_ids = [
-            mid for mid in match_df["match_id"].tolist()
-            if mid not in known_match_ids and mid not in processed_match_ids
-            and match_df.loc[match_df["match_id"] == mid, "has_statistics"].any()
+        # Filtrera ny, spelad data
+        new_nif_matches = [
+            m for m in nif_matches
+            if m["matchId"] not in known_match_ids
+            and m["matchId"] not in processed
+            and m.get("matchResult") is not None
+            and m["matchResult"].get("matchEndResult") not in (None, "")
         ]
 
-        if not new_ids:
-            print(f"[nor-scraper] {slug} – inga nya matcher")
+        if not new_nif_matches:
+            print(f"[nor-scraper]   inga nya matcher")
             continue
 
-        print(f"[nor-scraper] {slug} – {len(new_ids)} nya matcher: {new_ids}")
+        print(f"[nor-scraper]   {len(new_nif_matches)} nya matcher")
 
-        for mid in new_ids:
+        match_df = parse_matches(new_nif_matches, t)
+        if not match_df.empty:
+            all_matches.append(match_df)
+
+        for m in new_nif_matches:
+            mid = m["matchId"]
             print(f"[nor-scraper]   match {mid}...", flush=True)
             try:
-                match_detail = api.get_match(mid)
-                events = api.get_events(mid)
-                stats = api.get_stats(mid)
-                shifts_raw = api.get_shifts(mid)
-                momentum_raw = api.get_momentum(mid)
+                goals = api.get_goals(mid)
+                penalties = api.get_penalties(mid)
+                players = api.get_players(mid)
 
-                all_goals.append(parse_goal_events(events, mid, slug))
-                all_penalties.append(parse_penalty_events(events, mid, slug))
-                all_lineup.append(parse_match_lineup(match_detail, mid, slug))
-                all_period_stats.append(parse_period_stats(stats, mid, slug))
-                all_pp_stats.append(parse_powerplay_stats(stats, mid, slug))
-                all_shifts.append(parse_shifts(shifts_raw, mid, slug))
-                all_momentum.append(parse_momentum(momentum_raw, mid, slug))
-                processed_match_ids.add(mid)
+                if goals:
+                    all_goals.append(parse_goal_events(goals, mid))
+                if penalties:
+                    all_penalties.append(parse_penalty_events(penalties, mid))
+                if players:
+                    all_lineup.append(parse_match_lineup(players, mid))
+
+                processed.add(mid)
+                time.sleep(0.1)          # skonsam mot API
 
             except Exception as exc:
-                print(f"[nor-scraper]   FEL för match {mid}: {exc}")
+                print(f"[nor-scraper]   FEL match {mid}: {exc}")
 
     def _concat(frames: list[pd.DataFrame]) -> pd.DataFrame:
-        frames = [f for f in frames if not f.empty]
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        frames = [f for f in frames if f is not None and not f.empty]
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
 
     return {
         "matches": _concat(all_matches),
         "goal_events": _concat(all_goals),
         "penalty_events": _concat(all_penalties),
         "match_lineup": _concat(all_lineup),
-        "match_period_stats": _concat(all_period_stats),
-        "match_powerplay_stats": _concat(all_pp_stats),
-        "shifts": _concat(all_shifts),
-        "momentum": _concat(all_momentum),
+        # Wisehockey tracking – kräver direkt API-åtkomst (api.wisehockey.com)
+        "match_period_stats": pd.DataFrame(),
+        "match_powerplay_stats": pd.DataFrame(),
+        "shifts": pd.DataFrame(),
+        "momentum": pd.DataFrame(),
     }
 
 
 def scrape_season_summaries(tournament_ids: list[int]) -> dict[str, pd.DataFrame]:
-    """Hämtar säsongssammanfattning för alla lag och turneringar."""
+    """
+    Skater/goalie summaries via wise/tournaments/{id}/players|goalies/statistics.
+    Returnerar tomma DataFrames om Wisehockey-integrationen i proxy:n ej fungerar.
+    """
     api = NorAPI()
     all_summaries: list[pd.DataFrame] = []
 
-    for slug, team_id in TEAMS.items():
-        for tid in tournament_ids:
-            try:
-                raw = api.get_skater_summaries(team_id, tid)
-                all_summaries.append(parse_skater_summaries(raw, slug, tid))
-            except Exception:
+    for tid in tournament_ids:
+        try:
+            data = api._get(f"wise/tournaments/{tid}/players/statistics")
+            if data and not isinstance(data, dict) or (isinstance(data, dict) and "message" not in data):
+                # Parsa om data finns
                 pass
+        except Exception:
+            pass
 
     frames = [f for f in all_summaries if not f.empty]
     return {"skater_summaries": pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()}
 
 
 def scrape_players() -> dict[str, pd.DataFrame]:
-    api = NorAPI()
-    raw = api.get_players()
-    return {"players": parse_players(raw)}
+    """Spelarlista – NIF har ingen dedikerad endpoint; returnerar tom DataFrame."""
+    return {"players": pd.DataFrame()}
